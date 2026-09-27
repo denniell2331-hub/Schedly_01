@@ -10,10 +10,12 @@ import MoreScreen from './src/screens/More';
 import ProfileScreen from './src/screens/ProfileScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
 
-import { initialTasks } from './src/data/initialData';
 import type { Task } from './src/types/task';
 
-import { AppProvider } from './src/context/AppContext';
+import {
+  AppProvider,
+  useApp,
+} from './src/context/AppContext';
 
 
 // ==================================================
@@ -34,6 +36,26 @@ export default function App() {
 // ==================================================
 
 function AppContent() {
+
+  /*
+   * --------------------------------------------------
+   * APP CONTEXT
+   * --------------------------------------------------
+   *
+   * Tasks now come from AppContext.
+   *
+   * AppContext is connected to SQLite.
+   *
+   * --------------------------------------------------
+   */
+
+  const {
+    tasks,
+    addTask,
+    completeTask,
+    deleteTask,
+  } = useApp();
+
 
   /*
    * --------------------------------------------------
@@ -61,6 +83,12 @@ function AppContent() {
     | 'settings'
   >('home');
 
+  const [taskEntryOrigin, setTaskEntryOrigin] =
+    useState<'home' | 'tasks'>('home');
+
+  const [profileEntryOrigin, setProfileEntryOrigin] =
+    useState<'home' | 'more'>('more');
+
 
   /*
    * --------------------------------------------------
@@ -70,24 +98,6 @@ function AppContent() {
 
   const [profileName, setProfileName] =
     useState('Alex Mercer');
-
-
-  /*
-   * --------------------------------------------------
-   * TASKS
-   * --------------------------------------------------
-   *
-   * NOTE:
-   * Your existing task system is kept exactly as it
-   * currently works.
-   *
-   * We are not removing it yet.
-   *
-   * --------------------------------------------------
-   */
-
-  const [tasks, setTasks] =
-    useState<Task[]>(initialTasks);
 
 
   /*
@@ -118,16 +128,26 @@ function AppContent() {
    * --------------------------------------------------
    * ADD TASK
    * --------------------------------------------------
+   *
+   * The task is now saved through AppContext.
+   *
+   * AppContext → SQLite
+   *
+   * --------------------------------------------------
    */
 
-  const handleAddTask = (newTask: Task) => {
+  const handleAddTask = async (
+    newTask: Task
+  ) => {
 
-    setTasks((currentTasks) => [
-      newTask,
-      ...currentTasks,
-    ]);
+    await addTask(
+      newTask.title,
+      newTask.description,
+      newTask.priority,
+      newTask.deadline
+    );
 
-    setScreen('home');
+    setScreen(taskEntryOrigin);
   };
 
 
@@ -135,20 +155,33 @@ function AppContent() {
    * --------------------------------------------------
    * TOGGLE TASK
    * --------------------------------------------------
+   *
+   * The completion state is now saved to SQLite.
+   *
+   * --------------------------------------------------
    */
 
-  const handleToggleTask = (taskId: number) => {
+  const handleToggleTask = async (
+    taskId: number
+  ) => {
 
-    setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === taskId
-          ? {
-              ...task,
-              completed: !task.completed,
-            }
-          : task
-      )
-    );
+    await completeTask(taskId);
+
+  };
+
+
+  /*
+   * --------------------------------------------------
+   * DELETE TASK
+   * --------------------------------------------------
+   */
+
+  const handleDeleteTask = async (
+    taskId: number
+  ) => {
+
+    await deleteTask(taskId);
+
   };
 
 
@@ -188,11 +221,13 @@ function AppContent() {
       {screen === 'home' && (
 
         <HomeScreen
+
           tasks={tasks}
 
-          onAddTask={() =>
-            setScreen('addTask')
-          }
+          onAddTask={() => {
+            setTaskEntryOrigin('home');
+            setScreen('addTask');
+          }}
 
           onToggleTask={handleToggleTask}
 
@@ -207,6 +242,12 @@ function AppContent() {
           onGoMore={() =>
             setScreen('more')
           }
+
+          onGoProfile={() => {
+            setProfileEntryOrigin('home');
+            setScreen('profile')
+          }}
+
         />
 
       )}
@@ -219,9 +260,17 @@ function AppContent() {
       {screen === 'tasks' && (
 
         <TasksScreen
+
           tasks={tasks}
 
           onToggleTask={handleToggleTask}
+
+          onDeleteTask={handleDeleteTask}
+
+          onAddTask={() => {
+            setTaskEntryOrigin('tasks');
+            setScreen('addTask');
+          }}
 
           onGoHome={() =>
             setScreen('home')
@@ -234,6 +283,7 @@ function AppContent() {
           onGoMore={() =>
             setScreen('more')
           }
+
         />
 
       )}
@@ -248,7 +298,7 @@ function AppContent() {
         <AddTaskScreen
 
           onBack={() =>
-            setScreen('home')
+            setScreen(taskEntryOrigin)
           }
 
           onSaveTask={handleAddTask}
@@ -303,9 +353,10 @@ function AppContent() {
             setScreen('schedule')
           }
 
-          onGoProfile={() =>
+          onGoProfile={() => {
+            setProfileEntryOrigin('more');
             setScreen('profile')
-          }
+          }}
 
           onGoSettings={() =>
             setScreen('settings')
@@ -329,7 +380,7 @@ function AppContent() {
           name={profileName}
 
           onGoBack={() =>
-            setScreen('more')
+            setScreen(profileEntryOrigin)
           }
 
         />

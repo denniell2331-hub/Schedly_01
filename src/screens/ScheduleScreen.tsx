@@ -7,21 +7,49 @@ import {
   ScrollView,
   TextInput,
   Modal,
-  Alert,
 } from 'react-native';
 
-import { useState } from 'react';
+import {
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+import * as Notifications from 'expo-notifications';
 
 import { useApp } from '../context/AppContext';
-
 import type { AppTheme } from '../theme/theme';
 
+import {
+  getAcademicEvents,
+  insertAcademicEvent,
+  deleteAcademicEvent,
+  type AcademicEventRecord,
+  type AcademicEventType,
+  type AcademicEventColor,
+} from '../database/scheduleDatabase';
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
-// ======================================================
-// TYPES
-// ======================================================
+
+/* =====================================================
+   NOTIFICATION HANDLER
+===================================================== */
+
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
+
+
+/* =====================================================
+   TYPES
+===================================================== */
 
 type ScheduleScreenProps = {
   onGoHome: () => void;
@@ -29,30 +57,72 @@ type ScheduleScreenProps = {
   onGoMore: () => void;
 };
 
+type EventType = AcademicEventType;
+
 type IconName = keyof typeof Ionicons.glyphMap;
 
-type StudyBlockColor =
-  | 'blue'
-  | 'purple'
-  | 'green'
-  | 'orange';
-
-type StudyBlock = {
+type AcademicEvent = {
   id: number;
-  time: string;
+  eventType: EventType;
   subject: string;
+  date: string;
+  startTime: string;
+  endTime: string;
   description: string;
-  color: StudyBlockColor;
+  color: AcademicEventColor;
   icon: IconName;
 };
 
+type Reminder = {
+  id: number;
+  eventId: number;
+  eventType: EventType;
+  subject: string;
+  date: string;
+  daysBefore: number;
+};
 
-// ======================================================
-// AVAILABLE STUDY ICONS
-// ======================================================
+
+/* =====================================================
+   ACTIVITY TYPES
+===================================================== */
+
+const eventTypes: {
+  type: EventType;
+  icon: IconName;
+}[] = [
+  {
+    type: 'Quiz',
+    icon: 'help-circle-outline',
+  },
+  {
+    type: 'Exam',
+    icon: 'document-text-outline',
+  },
+  {
+    type: 'PIT',
+    icon: 'school-outline',
+  },
+  {
+    type: 'Assignment',
+    icon: 'create-outline',
+  },
+  {
+    type: 'Project',
+    icon: 'folder-outline',
+  },
+  {
+    type: 'Others',
+    icon: 'ellipsis-horizontal-circle-outline',
+  },
+];
+
+
+/* =====================================================
+   AVAILABLE ICONS
+===================================================== */
 
 const taskIcons: IconName[] = [
-
   // Academic
   'school-outline',
   'calculator-outline',
@@ -65,7 +135,7 @@ const taskIcons: IconName[] = [
   'laptop-outline',
   'desktop-outline',
 
-  // Planning / Productivity
+  // Planning
   'calendar-outline',
   'time-outline',
   'timer-outline',
@@ -75,7 +145,7 @@ const taskIcons: IconName[] = [
   'star-outline',
   'flag-outline',
 
-  // Creative / Activities
+  // Creative
   'color-palette-outline',
   'musical-notes-outline',
   'mic-outline',
@@ -87,53 +157,40 @@ const taskIcons: IconName[] = [
 ];
 
 
-// ======================================================
-// INITIAL STUDY BLOCKS
-// ======================================================
+/* =====================================================
+   INITIAL EVENTS
+===================================================== */
 
-const initialStudyBlocks: StudyBlock[] = [
-
+const initialAcademicEvents: AcademicEvent[] = [
   {
     id: 1,
-    time: '8:00 AM – 9:00 AM',
+    eventType: 'Exam',
     subject: 'Math',
-    description: 'Study chapter 3',
+    date: '2026-10-15',
+    startTime: '07:00 PM',
+    endTime: '09:00 PM',
+    description: 'Review chapters 1–5',
     color: 'blue',
     icon: 'calculator-outline',
   },
 
   {
     id: 2,
-    time: '10:00 AM – 11:00 AM',
+    eventType: 'Quiz',
     subject: 'English',
-    description: 'Read and review',
+    date: '2026-10-18',
+    startTime: '06:00 PM',
+    endTime: '07:00 PM',
+    description: 'Read and review notes',
     color: 'purple',
     icon: 'book-outline',
-  },
-
-  {
-    id: 3,
-    time: '1:00 PM – 2:00 PM',
-    subject: 'Science',
-    description: 'Lab report research',
-    color: 'green',
-    icon: 'flask-outline',
-  },
-
-  {
-    id: 4,
-    time: '3:00 PM – 4:00 PM',
-    subject: 'History',
-    description: 'Prepare outline',
-    color: 'orange',
-    icon: 'library-outline',
   },
 ];
 
 
-// ======================================================
-// MAIN SCREEN
-// ======================================================
+/* =====================================================
+   MAIN SCREEN
+===================================================== */
 
 export default function ScheduleScreen({
   onGoHome,
@@ -141,77 +198,304 @@ export default function ScheduleScreen({
   onGoMore,
 }: ScheduleScreenProps) {
 
-  // ====================================================
-  // APP THEME
-  // ====================================================
-
-  const {
-    theme,
-  } = useApp();
+  const { theme } = useApp();
 
   const styles = createStyles(theme);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
 
-  // ====================================================
-  // VIEW STATE
-  // ====================================================
+
+  /* ===================================================
+     DATE
+  =================================================== */
+
+  const today = new Date();
+
+  const [selectedDate, setSelectedDate] =
+    useState<Date>(today);
+
+  const [calendarMonth, setCalendarMonth] =
+    useState<Date>(
+      new Date(
+        today.getFullYear(),
+        today.getMonth(),
+        1
+      )
+    );
+
+
+  /* ===================================================
+     VIEW
+  =================================================== */
 
   const [selectedView, setSelectedView] =
     useState<'Day' | 'Week'>('Day');
 
 
-  // ====================================================
-  // STUDY BLOCKS
-  // ====================================================
+  /* ===================================================
+     SQLITE EVENTS
+  =================================================== */
 
-  const [studyBlocks, setStudyBlocks] =
-    useState<StudyBlock[]>(initialStudyBlocks);
+  const [academicEvents, setAcademicEvents] =
+    useState<AcademicEvent[]>([]);
+
+  const [databaseLoading, setDatabaseLoading] =
+    useState(true);
 
 
-  // ====================================================
-  // ADD STUDY BLOCK MODAL
-  // ====================================================
+  /* ===================================================
+     REMINDERS
+  =================================================== */
+
+  const [reminders, setReminders] =
+    useState<Reminder[]>([]);
+
+
+  /* ===================================================
+     ADD ACTIVITY MODAL
+  =================================================== */
 
   const [showAddModal, setShowAddModal] =
     useState(false);
 
+  const [showActivityDatePicker, setShowActivityDatePicker] =
+    useState(false);
 
-  // ====================================================
-  // FORM STATE
-  // ====================================================
+
+  /* ===================================================
+     FORM
+  =================================================== */
+
+  const [eventType, setEventType] =
+    useState<EventType>('Quiz');
 
   const [subject, setSubject] =
-    useState('');
-
-  const [startTime, setStartTime] =
-    useState('');
-
-  const [endTime, setEndTime] =
     useState('');
 
   const [description, setDescription] =
     useState('');
 
-
   const [selectedIcon, setSelectedIcon] =
-    useState<IconName>('school-outline');
+    useState<IconName>(
+      'school-outline'
+    );
 
 
-  // ====================================================
-  // FORM HELPERS
-  // ====================================================
+  /* ===================================================
+     TIME PICKER
+  =================================================== */
+
+  const [startHour, setStartHour] =
+    useState(7);
+
+  const [startMinute, setStartMinute] =
+    useState(0);
+
+  const [startPeriod, setStartPeriod] =
+    useState<'AM' | 'PM'>('PM');
+
+
+  const [endHour, setEndHour] =
+    useState(9);
+
+  const [endMinute, setEndMinute] =
+    useState(0);
+
+  const [endPeriod, setEndPeriod] =
+    useState<'AM' | 'PM'>('PM');
+
+
+  /* ===================================================
+     LOAD SQLITE
+  =================================================== */
+
+  useEffect(() => {
+
+    async function loadEvents() {
+
+      try {
+
+        setDatabaseLoading(true);
+
+        const savedEvents =
+          await getAcademicEvents();
+
+
+        /*
+         * If this is the first run and the table
+         * is empty, insert the original sample
+         * activities into SQLite.
+         */
+
+        if (
+          savedEvents.length === 0
+        ) {
+
+          for (
+            const event of
+            initialAcademicEvents
+          ) {
+
+            await insertAcademicEvent(
+              event
+            );
+          }
+
+
+          setAcademicEvents(
+            initialAcademicEvents
+          );
+
+        } else {
+
+          setAcademicEvents(
+            savedEvents.map(
+              convertDatabaseEvent
+            )
+          );
+        }
+
+      } catch (error) {
+
+        console.error(
+          'Failed to load academic events:',
+          error
+        );
+
+        showFlashcard({
+          title: 'Schedule Unavailable',
+          message: 'Unable to load your academic schedule.',
+          tone: 'danger',
+        });
+
+      } finally {
+
+        setDatabaseLoading(false);
+      }
+    }
+
+
+    loadEvents();
+
+  }, []);
+
+
+  /* ===================================================
+     GENERATE REMINDERS
+  =================================================== */
+
+  useEffect(() => {
+
+    const generatedReminders: Reminder[] = [];
+
+
+    academicEvents.forEach(
+      (event) => {
+
+        let reminderDays: number[] =
+          [];
+
+
+        if (
+          event.eventType === 'Quiz'
+        ) {
+
+          reminderDays = [
+            3,
+            2,
+            1,
+          ];
+
+        } else if (
+          event.eventType === 'Exam'
+        ) {
+
+          reminderDays = [
+            7,
+            3,
+            1,
+          ];
+        }
+
+
+        reminderDays.forEach(
+          (daysBefore) => {
+
+            generatedReminders.push({
+              id:
+                event.id * 100 +
+                daysBefore,
+
+              eventId:
+                event.id,
+
+              eventType:
+                event.eventType,
+
+              subject:
+                event.subject,
+
+              date:
+                event.date,
+
+              daysBefore,
+            });
+          }
+        );
+      }
+    );
+
+
+    setReminders(
+      generatedReminders
+    );
+
+  }, [academicEvents]);
+
+
+  /* ===================================================
+     FORM RESET
+  =================================================== */
 
   const resetForm = () => {
 
+    setEventType('Quiz');
+
     setSubject('');
-    setStartTime('');
-    setEndTime('');
+
     setDescription('');
-    setSelectedIcon('school-outline');
+
+    setShowActivityDatePicker(false);
+
+    setSelectedIcon(
+      'school-outline'
+    );
+
+
+    setStartHour(7);
+
+    setStartMinute(0);
+
+    setStartPeriod('PM');
+
+
+    setEndHour(9);
+
+    setEndMinute(0);
+
+    setEndPeriod('PM');
   };
 
 
-  const handleOpenAddBlock = () => {
+  /* ===================================================
+     OPEN ADD MODAL
+  =================================================== */
+
+  const handleOpenAddActivity = () => {
 
     resetForm();
 
@@ -219,9 +503,9 @@ export default function ScheduleScreen({
   };
 
 
-  // ====================================================
-  // SUBJECT ICON SUGGESTION
-  // ====================================================
+  /* ===================================================
+     SUBJECT ICON SUGGESTION
+  =================================================== */
 
   const handleSubjectChange = (
     value: string
@@ -229,116 +513,294 @@ export default function ScheduleScreen({
 
     setSubject(value);
 
-    const suggestedIcon =
-      getIconForSubject(value);
 
-    if (value.trim()) {
-      setSelectedIcon(suggestedIcon);
+    if (
+      value.trim().length === 0
+    ) {
+      return;
     }
+
+
+    setSelectedIcon(
+      getIconForSubject(value)
+    );
   };
 
 
-  // ====================================================
-  // ADD STUDY BLOCK
-  // ====================================================
+  /* ===================================================
+     ADD ACADEMIC EVENT
+  =================================================== */
 
-  const handleAddStudyBlock = () => {
+  const handleAddAcademicEvent =
+    async () => {
 
-    if (!subject.trim()) {
+      if (!subject.trim()) {
 
-      Alert.alert(
-        'Missing Subject',
-        'Please enter a subject.'
-      );
+        showFlashcard({
+          title: 'Activity Name Required',
+          message: 'Please enter the subject or activity name.',
+          tone: 'warning',
+        });
 
-      return;
-    }
-
-
-    if (!startTime.trim()) {
-
-      Alert.alert(
-        'Missing Start Time',
-        'Please enter a start time.'
-      );
-
-      return;
-    }
+        return;
+      }
 
 
-    if (!endTime.trim()) {
-
-      Alert.alert(
-        'Missing End Time',
-        'Please enter an end time.'
-      );
-
-      return;
-    }
+      const formattedStartTime =
+        formatTime(
+          startHour,
+          startMinute,
+          startPeriod
+        );
 
 
-    if (!description.trim()) {
-
-      Alert.alert(
-        'Missing Description',
-        'Please enter a short description.'
-      );
-
-      return;
-    }
+      const formattedEndTime =
+        formatTime(
+          endHour,
+          endMinute,
+          endPeriod
+        );
 
 
-    const newStudyBlock: StudyBlock = {
+      const newEvent: AcademicEvent = {
 
-      id: Date.now(),
+        id: Date.now(),
 
-      time:
-        `${startTime.trim()} – ${endTime.trim()}`,
+        eventType,
 
-      subject:
-        subject.trim(),
+        subject:
+          subject.trim(),
 
-      description:
-        description.trim(),
+        date:
+          formatDateForStorage(
+            selectedDate
+          ),
 
-      color:
-        getNextColor(studyBlocks.length),
+        startTime:
+          formattedStartTime,
 
-      icon:
-        selectedIcon,
+        endTime:
+          formattedEndTime,
+
+        description:
+          description.trim(),
+
+        color:
+          getNextColor(
+            academicEvents.length
+          ),
+
+        icon:
+          selectedIcon,
+      };
+
+
+      try {
+
+        /*
+         * FIRST save the event to SQLite.
+         */
+
+        await insertAcademicEvent(
+          newEvent
+        );
+
+
+        /*
+         * THEN update the visible UI.
+         */
+
+        setAcademicEvents(
+          (currentEvents) => [
+            ...currentEvents,
+            newEvent,
+          ]
+        );
+
+
+        /*
+         * Schedule OS reminders.
+         */
+
+        await scheduleNotificationsForEvent(
+          newEvent
+        );
+
+
+        resetForm();
+
+        setShowAddModal(false);
+
+
+        showFlashcard({
+          title: 'Activity Added',
+          message: `${newEvent.subject} has been added to your schedule.`,
+          tone: 'success',
+        });
+
+      } catch (error) {
+
+        console.error(
+          'Failed to save academic event:',
+          error
+        );
+
+        showFlashcard({
+          title: 'Save Error',
+          message: 'The academic activity could not be saved.',
+          tone: 'danger',
+        });
+      }
     };
 
 
-    setStudyBlocks(
-      (currentBlocks) => [
-        ...currentBlocks,
-        newStudyBlock,
-      ]
-    );
+  /* ===================================================
+     DELETE EVENT
+  =================================================== */
+
+  const handleDeleteEvent = (
+    event: AcademicEvent
+  ) => {
+
+    showFlashcard({
+      title: 'Delete Activity?',
+      message: `"${event.subject}" will be permanently removed from your schedule.`,
+      tone: 'danger',
+      primaryLabel: 'Delete',
+      secondaryLabel: 'Cancel',
+      onPrimary: async () => {
+
+            try {
+
+              await deleteAcademicEvent(
+                event.id
+              );
 
 
-    resetForm();
+              setAcademicEvents(
+                (currentEvents) =>
+                  currentEvents.filter(
+                    (currentEvent) =>
+                      currentEvent.id !==
+                      event.id
+                  )
+              );
 
-    setShowAddModal(false);
+            } catch (error) {
 
+              console.error(
+                'Failed to delete event:',
+                error
+              );
 
-    Alert.alert(
-      'Study Block Added',
-      `${newStudyBlock.subject} has been added to your schedule.`
-    );
+              showFlashcard({
+                title: 'Delete Error',
+                message: 'Unable to delete the activity.',
+                tone: 'danger',
+              });
+            }
+      },
+    });
   };
 
 
-  // ====================================================
-  // RENDER
-  // ====================================================
+  /* ===================================================
+     CURRENT DAY EVENTS
+  =================================================== */
+
+  const selectedDateString =
+    formatDateForStorage(
+      selectedDate
+    );
+
+
+  const dayEvents =
+    academicEvents
+      .filter(
+        (event) =>
+          event.date ===
+          selectedDateString
+      )
+      .sort(
+        compareEventsByTime
+      );
+
+
+  /* ===================================================
+     WEEK EVENTS
+  =================================================== */
+
+  const weekDates =
+    getWeekDates(
+      selectedDate
+    );
+
+
+  const weekEvents =
+    academicEvents
+      .filter(
+        (event) =>
+          weekDates.some(
+            (date) =>
+              formatDateForStorage(
+                date
+              ) === event.date
+          )
+      )
+      .sort(
+        compareEventsByDateAndTime
+      );
+
+
+  /* ===================================================
+     DISPLAY EVENTS
+  =================================================== */
+
+  const displayedEvents =
+    selectedView === 'Day'
+      ? dayEvents
+      : weekEvents;
+
+  const displayedEventIds = new Set(
+    displayedEvents.map(
+      (event) => event.id
+    )
+  );
+
+  const todayString =
+    formatDateForStorage(today);
+
+  const upcomingEvents = academicEvents
+    .filter(
+      (event) =>
+        event.date >= todayString &&
+        !displayedEventIds.has(event.id)
+    )
+    .sort(
+      compareEventsByDateAndTime
+    );
+
+
+  /* ===================================================
+     CALENDAR DAYS
+  =================================================== */
+
+  const calendarDays =
+    useMemo(
+      () =>
+        buildCalendarDays(
+          calendarMonth
+        ),
+      [calendarMonth]
+    );
+
+
+  /* ===================================================
+     RENDER
+  =================================================== */
 
   return (
     <View style={styles.container}>
-
-      {/* ==================================================
-          STATUS BAR
-          ================================================== */}
 
       <StatusBar
         barStyle={
@@ -346,68 +808,56 @@ export default function ScheduleScreen({
             ? 'light-content'
             : 'dark-content'
         }
-        backgroundColor={theme.background}
+        backgroundColor={
+          theme.background
+        }
       />
 
 
-      {/* ==================================================
-          MAIN SCROLL CONTENT
-          ================================================== */}
-
       <ScrollView
-        showsVerticalScrollIndicator={false}
+        showsVerticalScrollIndicator={
+          false
+        }
         contentContainerStyle={
           styles.scrollContent
         }
       >
 
-        {/* ==================================================
+        {/* =================================================
             HEADER
-            ================================================== */}
+        ================================================= */}
 
         <View style={styles.header}>
 
-          <Text style={styles.headerTitle}>
-            Study Schedule
-          </Text>
-
-
-          <Pressable
-            style={
-              styles.headerCalendarButton
-            }
-            onPress={() => {
-
-              Alert.alert(
-                'Calendar',
-                'Calendar selection will be added next.'
-              );
-
-            }}
+          <View
+            style={styles.headerTop}
           >
 
-            <Ionicons
-              name="calendar-outline"
-              size={25}
-              color={theme.primary}
-            />
+            <Text
+              style={styles.headerTitle}
+            >
+              Study Schedule
+            </Text>
 
-          </Pressable>
+          </View>
+
 
         </View>
 
 
-        {/* ==================================================
-            DAY / WEEK SELECTOR
-            ================================================== */}
+        {/* =================================================
+            VIEW SELECTOR
+        ================================================= */}
 
-        <View style={styles.viewSelector}>
-
-          {/* DAY */}
+        <View
+          style={
+            styles.viewSelectorContainer
+          }
+        >
 
           <Pressable
             style={[
-              styles.viewButton,
+              styles.viewSelectorButton,
 
               selectedView === 'Day' &&
                 styles.selectedViewButton,
@@ -419,10 +869,10 @@ export default function ScheduleScreen({
 
             <Text
               style={[
-                styles.viewButtonText,
+                styles.viewSelectorText,
 
                 selectedView === 'Day' &&
-                  styles.selectedViewButtonText,
+                  styles.selectedViewText,
               ]}
             >
               Day
@@ -431,11 +881,9 @@ export default function ScheduleScreen({
           </Pressable>
 
 
-          {/* WEEK */}
-
           <Pressable
             style={[
-              styles.viewButton,
+              styles.viewSelectorButton,
 
               selectedView === 'Week' &&
                 styles.selectedViewButton,
@@ -447,10 +895,10 @@ export default function ScheduleScreen({
 
             <Text
               style={[
-                styles.viewButtonText,
+                styles.viewSelectorText,
 
                 selectedView === 'Week' &&
-                  styles.selectedViewButtonText,
+                  styles.selectedViewText,
               ]}
             >
               Week
@@ -461,497 +909,1259 @@ export default function ScheduleScreen({
         </View>
 
 
-        {/* ==================================================
-            DATE NAVIGATION
-            ================================================== */}
+        {/* =================================================
+            CALENDAR
+        ================================================= */}
 
-        <View style={styles.dateNavigation}>
+        <View
+          style={
+            styles.calendarCard
+          }
+        >
 
-          {/* PREVIOUS */}
-
-          <Pressable
-            style={styles.arrowButton}
-            onPress={() => {
-
-              Alert.alert(
-                'Previous Day',
-                'Previous date navigation will be added next.'
-              );
-
-            }}
+          <View
+            style={
+              styles.calendarHeader
+            }
           >
 
-            <Ionicons
-              name="chevron-back"
-              size={27}
-              color={theme.text}
-            />
+            <Pressable
+              style={
+                styles.calendarArrow
+              }
+              onPress={() => {
 
-          </Pressable>
+                setCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() - 1,
+                    1
+                  )
+                );
 
-
-          {/* DATE */}
-
-          <View style={styles.dateCenter}>
-
-            <View style={styles.dateRow}>
+              }}
+            >
 
               <Ionicons
-                name="calendar-outline"
-                size={27}
+                name="chevron-back"
+                size={21}
                 color={theme.primary}
               />
 
-              <Text style={styles.dateText}>
-                Apr 23, 2025
-              </Text>
-
-            </View>
+            </Pressable>
 
 
-            <Text style={styles.dayText}>
-              Wednesday
+            <Text
+              style={
+                styles.calendarMonthTitle
+              }
+            >
+              {getMonthName(
+                calendarMonth
+              )}{' '}
+              {calendarMonth.getFullYear()}
+            </Text>
+
+
+            <Pressable
+              style={
+                styles.calendarArrow
+              }
+              onPress={() => {
+
+                setCalendarMonth(
+                  new Date(
+                    calendarMonth.getFullYear(),
+                    calendarMonth.getMonth() + 1,
+                    1
+                  )
+                );
+
+              }}
+            >
+
+              <Ionicons
+                name="chevron-forward"
+                size={21}
+                color={theme.primary}
+              />
+
+            </Pressable>
+
+          </View>
+
+
+          {/* WEEKDAY LABELS */}
+
+          <View
+            style={
+              styles.weekdayRow
+            }
+          >
+
+            {[
+              'S',
+              'M',
+              'T',
+              'W',
+              'T',
+              'F',
+              'S',
+            ].map(
+              (
+                day,
+                index
+              ) => (
+
+                <Text
+                  key={`${day}-${index}`}
+                  style={
+                    styles.weekdayText
+                  }
+                >
+                  {day}
+                </Text>
+
+              )
+            )}
+
+          </View>
+
+
+          {/* CALENDAR GRID */}
+
+          <View
+            style={
+              styles.calendarGrid
+            }
+          >
+
+            {calendarDays.map(
+              (
+                date,
+                index
+              ) => {
+
+                if (!date) {
+
+                  return (
+                    <View
+                      key={`empty-${index}`}
+                      style={
+                        styles.calendarDay
+                      }
+                    />
+                  );
+                }
+
+
+                const isSelected =
+                  isSameDate(
+                    date,
+                    selectedDate
+                  );
+
+
+                const isToday =
+                  isSameDate(
+                    date,
+                    today
+                  );
+
+
+                const hasEvent =
+                  academicEvents.some(
+                    (event) =>
+                      event.date ===
+                      formatDateForStorage(
+                        date
+                      )
+                  );
+
+
+                return (
+
+                  <Pressable
+                    key={
+                      formatDateForStorage(
+                        date
+                      )
+                    }
+                    style={[
+                      styles.calendarDay,
+
+                      isSelected &&
+                        styles.selectedCalendarDay,
+
+                      isToday &&
+                        !isSelected &&
+                        styles.todayCalendarDay,
+                    ]}
+                    onPress={() => {
+
+                      setSelectedDate(
+                        date
+                      );
+
+                      setCalendarMonth(
+                        new Date(
+                          date.getFullYear(),
+                          date.getMonth(),
+                          1
+                        )
+                      );
+
+                    }}
+                  >
+
+                    <Text
+                      style={[
+                        styles.calendarDayText,
+
+                        isSelected &&
+                          styles.selectedCalendarDayText,
+
+                        isToday &&
+                          !isSelected &&
+                          styles.todayCalendarDayText,
+                      ]}
+                    >
+                      {date.getDate()}
+                    </Text>
+
+
+                    {hasEvent && (
+
+                      <View
+                        style={
+                          styles.eventDot
+                        }
+                      />
+
+                    )}
+
+                  </Pressable>
+
+                );
+              }
+            )}
+
+          </View>
+
+        </View>
+
+
+        {/* =================================================
+            SELECTED DATE
+        ================================================= */}
+
+        <View
+          style={
+            styles.selectedDateHeader
+          }
+        >
+
+          <View>
+
+            <Text
+              style={
+                styles.selectedDateTitle
+              }
+            >
+              {formatDisplayDate(
+                selectedDate
+              )}
+            </Text>
+
+
+            <Text
+              style={
+                styles.selectedDateSubtitle
+              }
+            >
+              {selectedView === 'Day'
+                ? 'Academic activities'
+                : 'Weekly academic activities'}
             </Text>
 
           </View>
 
 
-          {/* NEXT */}
+          <View
+            style={
+              styles.eventCountBadge
+            }
+          >
 
-          <Pressable
-            style={styles.arrowButton}
-            onPress={() => {
+            <Text
+              style={
+                styles.eventCountText
+              }
+            >
+              {displayedEvents.length}
+            </Text>
 
-              Alert.alert(
-                'Next Day',
-                'Next date navigation will be added next.'
-              );
+          </View>
 
-            }}
+        </View>
+
+
+        {/* =================================================
+            EVENTS
+        ================================================= */}
+
+        {databaseLoading ? (
+
+          <View
+            style={
+              styles.emptyCard
+            }
           >
 
             <Ionicons
-              name="chevron-forward"
-              size={27}
-              color={theme.text}
+              name="sync-outline"
+              size={38}
+              color={theme.primary}
             />
 
-          </Pressable>
+            <Text
+              style={
+                styles.emptyTitle
+              }
+            >
+              Loading schedule...
+            </Text>
 
-        </View>
+          </View>
+
+        ) : displayedEvents.length === 0 ? (
+
+          <View
+            style={
+              styles.emptyCard
+            }
+          >
+
+            <View
+              style={
+                styles.emptyIconCircle
+              }
+            >
+
+              <Ionicons
+                name="calendar-outline"
+                size={34}
+                color={theme.primary}
+              />
+
+            </View>
 
 
-        {/* ==================================================
-            STUDY SCHEDULE
-            ================================================== */}
-
-        <View style={styles.scheduleContainer}>
-
-          {studyBlocks.map((block) => (
-
-            <StudyBlockCard
-              key={block.id}
-              block={block}
-              theme={theme}
-            />
-
-          ))}
-
-        </View>
+            <Text
+              style={
+                styles.emptyTitle
+              }
+            >
+              No academic activity
+            </Text>
 
 
-        {/* ==================================================
-            ADD STUDY BLOCK
-            ================================================== */}
+            <Text
+              style={
+                styles.emptyText
+              }
+            >
+              There are no scheduled activities
+              for this {selectedView === 'Day'
+                ? 'day'
+                : 'week'}.
+            </Text>
 
-        <Pressable
-          style={styles.addStudyButton}
-          onPress={handleOpenAddBlock}
+
+          </View>
+
+        ) : (
+
+          <View>
+
+            {displayedEvents.map(
+              (event) => (
+
+                <AcademicEventCard
+                  key={event.id}
+                  event={event}
+                  theme={theme}
+                  onDelete={() =>
+                    handleDeleteEvent(
+                      event
+                    )
+                  }
+                />
+
+              )
+            )}
+
+          </View>
+
+        )}
+
+
+        {/* =================================================
+            UPCOMING ACTIVITIES
+        ================================================= */}
+
+        {!databaseLoading &&
+          upcomingEvents.length > 0 && (
+            <View style={styles.upcomingSection}>
+              <View style={styles.upcomingHeader}>
+                <View>
+                  <Text
+                    style={styles.upcomingTitle}
+                  >
+                    Upcoming Activities
+                  </Text>
+
+                  <Text
+                    style={styles.upcomingSubtitle}
+                  >
+                    Sorted from soonest to latest
+                  </Text>
+                </View>
+
+                <View
+                  style={styles.upcomingCountBadge}
+                >
+                  <Text
+                    style={styles.upcomingCountText}
+                  >
+                    {upcomingEvents.length}
+                  </Text>
+                </View>
+              </View>
+
+              {upcomingEvents.map(
+                (event) => (
+                  <AcademicEventCard
+                    key={`upcoming-${event.id}`}
+                    event={event}
+                    theme={theme}
+                    onDelete={() =>
+                      handleDeleteEvent(event)
+                    }
+                  />
+                )
+              )}
+            </View>
+          )}
+
+
+        {/* =================================================
+            REMINDER INFORMATION
+        ================================================= */}
+
+        <View
+          style={
+            styles.reminderInfoCard
+          }
         >
 
-          <Ionicons
-            name="add"
-            size={25}
-            color="#FFFFFF"
-          />
+          <View
+            style={
+              styles.reminderIconCircle
+            }
+          >
 
-          <Text style={styles.addStudyButtonText}>
-            Add Study Block
-          </Text>
+            <Ionicons
+              name="notifications-outline"
+              size={22}
+              color={theme.primary}
+            />
 
-        </Pressable>
+          </View>
+
+
+          <View
+            style={
+              styles.reminderInfoText
+            }
+          >
+
+            <Text
+              style={
+                styles.reminderInfoTitle
+              }
+            >
+              Activity reminders
+            </Text>
+
+
+            <Text
+              style={
+                styles.reminderInfoDescription
+              }
+            >
+              Quiz reminders are sent 3, 2,
+              and 1 day before. Exam reminders
+              are sent 7, 3, and 1 day before.
+            </Text>
+
+          </View>
+
+        </View>
+
+
+        {/* =================================================
+            BOTTOM SPACE
+        ================================================= */}
+
+        <View
+          style={
+            styles.bottomSpace
+          }
+        />
 
       </ScrollView>
 
+      {/* =====================================================
+          FLOATING ADD ACTIVITY BUTTON
+      ===================================================== */}
 
-      {/* ==================================================
-          BOTTOM NAVIGATION
-          ================================================== */}
+      <Pressable
+        style={styles.floatingAddButton}
+        onPress={handleOpenAddActivity}
+        accessibilityRole="button"
+        accessibilityLabel="Add activity"
+      >
+        <Ionicons
+          name="add"
+          size={22}
+          color="#FFFFFF"
+        />
+        <Text style={styles.floatingAddButtonText}>
+          Add Activity
+        </Text>
+      </Pressable>
 
-      <View style={styles.bottomNavigation}>
-
-        {/* HOME */}
-
-        <Pressable
-          style={styles.bottomItem}
-          onPress={onGoHome}
-        >
-
-          <Ionicons
-            name="home-outline"
-            size={23}
-            color={theme.tabInactive}
-          />
-
-          <Text style={styles.bottomLabel}>
-            Home
-          </Text>
-
-        </Pressable>
-
-
-        {/* TASKS */}
-
-        <Pressable
-          style={styles.bottomItem}
-          onPress={onGoTasks}
-        >
-
-          <Ionicons
-            name="checkbox-outline"
-            size={23}
-            color={theme.tabInactive}
-          />
-
-          <Text style={styles.bottomLabel}>
-            Tasks
-          </Text>
-
-        </Pressable>
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
 
 
-        {/* SCHEDULE - ACTIVE */}
-
-        <Pressable
-          style={styles.bottomItem}
-        >
-
-          <Ionicons
-            name="calendar"
-            size={23}
-            color={theme.primary}
-          />
-
-          <Text
-            style={[
-              styles.bottomLabel,
-              styles.activeLabel,
-            ]}
-          >
-            Schedule
-          </Text>
-
-        </Pressable>
-
-
-        {/* MORE */}
-
-        <Pressable
-          style={styles.bottomItem}
-          onPress={onGoMore}
-        >
-
-          <Ionicons
-            name="ellipsis-horizontal"
-            size={23}
-            color={theme.tabInactive}
-          />
-
-          <Text style={styles.bottomLabel}>
-            More
-          </Text>
-
-        </Pressable>
-
-      </View>
-
-
-      {/* ==================================================
-          ADD STUDY BLOCK MODAL
-          ================================================== */}
+      {/* =================================================
+          ADD ACTIVITY MODAL
+      ================================================= */}
 
       <Modal
         visible={showAddModal}
-        animationType="slide"
         transparent
+        animationType="slide"
         onRequestClose={() =>
           setShowAddModal(false)
         }
       >
 
-        <View style={styles.modalOverlay}>
+        <View
+          style={
+            styles.modalOverlay
+          }
+        >
 
-          <View style={styles.modalContainer}>
+          <View
+            style={
+              styles.modalContainer
+            }
+          >
 
-            <ScrollView
-              showsVerticalScrollIndicator={false}
-              keyboardShouldPersistTaps="handled"
+            {/* MODAL HEADER */}
+
+            <View
+              style={
+                styles.modalHeader
+              }
             >
 
-              {/* ==================================================
-                  MODAL HEADER
-                  ================================================== */}
+              <View>
 
-              <View style={styles.modalHeader}>
-
-                <View>
-
-                  <Text style={styles.modalTitle}>
-                    Add Study Block
-                  </Text>
-
-                  <Text
-                    style={styles.modalSubtitle}
-                  >
-                    Plan your next study session
-                  </Text>
-
-                </View>
-
-
-                <Pressable
-                  style={styles.closeButton}
-                  onPress={() =>
-                    setShowAddModal(false)
+                <Text
+                  style={
+                    styles.modalTitle
                   }
                 >
+                  Add Academic Activity
+                </Text>
 
-                  <Ionicons
-                    name="close"
-                    size={25}
-                    color={theme.textSecondary}
-                  />
 
-                </Pressable>
+                <Text
+                  style={
+                    styles.modalSubtitle
+                  }
+                >
+                  Add an activity to your schedule
+                </Text>
 
               </View>
 
 
-              {/* ==================================================
-                  SUBJECT
-                  ================================================== */}
+              <Pressable
+                style={
+                  styles.modalCloseButton
+                }
+                onPress={() => {
 
-              <Text style={styles.inputLabel}>
-                Subject
+                  resetForm();
+
+                  setShowAddModal(
+                    false
+                  );
+
+                }}
+              >
+
+                <Ionicons
+                  name="close"
+                  size={24}
+                  color={theme.text}
+                />
+
+              </Pressable>
+
+            </View>
+
+
+            <ScrollView
+              showsVerticalScrollIndicator={
+                false
+              }
+              keyboardShouldPersistTaps="handled"
+              contentContainerStyle={
+                styles.modalScrollContent
+              }
+            >
+
+              {/* =================================================
+                  ACTIVITY TYPE
+              ================================================= */}
+
+              <Text
+                style={
+                  styles.formLabel
+                }
+              >
+                Activity Type
               </Text>
 
-              <TextInput
-                style={styles.input}
-                placeholder="e.g. Mathematics"
-                placeholderTextColor={
-                  theme.textMuted
-                }
-                value={subject}
-                onChangeText={
-                  handleSubjectChange
-                }
-              />
-
-
-              {/* ==================================================
-                  TIME
-                  ================================================== */}
-
-              <View style={styles.timeRow}>
-
-                {/* START TIME */}
-
-                <View
-                  style={
-                    styles.timeInputContainer
-                  }
-                >
-
-                  <Text style={styles.inputLabel}>
-                    Start Time
-                  </Text>
-
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 5:00 PM"
-                    placeholderTextColor={
-                      theme.textMuted
-                    }
-                    value={startTime}
-                    onChangeText={
-                      setStartTime
-                    }
-                  />
-
-                </View>
-
-
-                {/* END TIME */}
-
-                <View
-                  style={
-                    styles.timeInputContainer
-                  }
-                >
-
-                  <Text style={styles.inputLabel}>
-                    End Time
-                  </Text>
-
-                  <TextInput
-                    style={styles.input}
-                    placeholder="e.g. 6:00 PM"
-                    placeholderTextColor={
-                      theme.textMuted
-                    }
-                    value={endTime}
-                    onChangeText={
-                      setEndTime
-                    }
-                  />
-
-                </View>
-
-              </View>
-
-
-              {/* ==================================================
-                  DESCRIPTION
-                  ================================================== */}
-
-              <Text style={styles.inputLabel}>
-                Description
-              </Text>
-
-              <TextInput
-                style={[
-                  styles.input,
-                  styles.descriptionInput,
-                ]}
-                placeholder="What will you study?"
-                placeholderTextColor={
-                  theme.textMuted
-                }
-                value={description}
-                onChangeText={
-                  setDescription
-                }
-                multiline
-                textAlignVertical="top"
-              />
-
-
-              {/* ==================================================
-                  ICON PICKER
-                  ================================================== */}
 
               <View
                 style={
-                  styles.iconPickerHeader
+                  styles.eventTypeGrid
                 }
               >
 
-                <View>
+                {eventTypes.map(
+                  (item) => {
 
-                  <Text style={styles.inputLabel}>
-                    Choose an Icon
-                  </Text>
-
-                  <Text
-                    style={
-                      styles.iconPickerSubtitle
-                    }
-                  >
-                    Select an icon for your study block
-                  </Text>
-
-                </View>
+                    const selected =
+                      eventType ===
+                      item.type;
 
 
-                {/* SELECTED ICON */}
+                    return (
 
+                      <Pressable
+                        key={item.type}
+                        style={[
+                          styles.eventTypeButton,
+
+                          selected &&
+                            styles.selectedEventTypeButton,
+                        ]}
+                        onPress={() =>
+                          setEventType(
+                            item.type
+                          )
+                        }
+                      >
+
+                        <Ionicons
+                          name={
+                            item.icon
+                          }
+                          size={20}
+                          color={
+                            selected
+                              ? '#FFFFFF'
+                              : theme.primary
+                          }
+                        />
+
+
+                        <Text
+                          style={[
+                            styles.eventTypeText,
+
+                            selected &&
+                              styles.selectedEventTypeText,
+                          ]}
+                        >
+                          {item.type}
+                        </Text>
+
+                      </Pressable>
+
+                    );
+                  }
+                )}
+
+              </View>
+
+
+              {/* =================================================
+                  SUBJECT
+              ================================================= */}
+
+              <Text
+                style={
+                  styles.formLabel
+                }
+              >
+                Subject / Activity Name
+              </Text>
+
+
+              <View
+                style={
+                  styles.inputContainer
+                }
+              >
+
+                <Ionicons
+                  name="book-outline"
+                  size={21}
+                  color={theme.primary}
+                />
+
+
+                <TextInput
+                  style={
+                    styles.input
+                  }
+                  value={subject}
+                  onChangeText={
+                    handleSubjectChange
+                  }
+                  placeholder="e.g. Mathematics"
+                  placeholderTextColor={
+                    theme.textMuted
+                  }
+                />
+
+              </View>
+
+
+              {/* =================================================
+                  DATE
+              ================================================= */}
+
+              <Text
+                style={
+                  styles.formLabel
+                }
+              >
+                {eventType} Date
+              </Text>
+
+
+              <Pressable
+                style={
+                  styles.dateButton
+                }
+                onPress={() => {
+
+                  setCalendarMonth(
+                    new Date(
+                      selectedDate.getFullYear(),
+                      selectedDate.getMonth(),
+                      1
+                    )
+                  );
+
+                  setShowActivityDatePicker(
+                    (current) => !current
+                  );
+                }}
+              >
+
+                <Ionicons
+                  name="calendar-outline"
+                  size={22}
+                  color={theme.primary}
+                />
+
+
+                <Text
+                  style={
+                    styles.dateButtonText
+                  }
+                >
+                  {formatDisplayDate(
+                    selectedDate
+                  )}
+                </Text>
+
+
+                <Ionicons
+                  name={
+                    showActivityDatePicker
+                      ? 'chevron-up'
+                      : 'chevron-down'
+                  }
+                  size={20}
+                  color={theme.primary}
+                />
+
+              </Pressable>
+
+
+              {showActivityDatePicker && (
                 <View
                   style={
-                    styles.selectedIconPreview
+                    styles.activityDateCalendar
                   }
                 >
 
-                  <Ionicons
-                    name={selectedIcon}
-                    size={22}
-                    color={theme.primary}
-                  />
+                  <View
+                    style={
+                      styles.activityDateCalendarHeader
+                    }
+                  >
+
+                    <Pressable
+                      style={
+                        styles.activityDateCalendarArrow
+                      }
+                      onPress={() => {
+                        setCalendarMonth(
+                          new Date(
+                            calendarMonth.getFullYear(),
+                            calendarMonth.getMonth() - 1,
+                            1
+                          )
+                        );
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-back"
+                        size={18}
+                        color={theme.primary}
+                      />
+                    </Pressable>
+
+
+                    <Text
+                      style={
+                        styles.activityDateCalendarMonth
+                      }
+                    >
+                      {getMonthName(
+                        calendarMonth
+                      )}{' '}
+                      {calendarMonth.getFullYear()}
+                    </Text>
+
+
+                    <Pressable
+                      style={
+                        styles.activityDateCalendarArrow
+                      }
+                      onPress={() => {
+                        setCalendarMonth(
+                          new Date(
+                            calendarMonth.getFullYear(),
+                            calendarMonth.getMonth() + 1,
+                            1
+                          )
+                        );
+                      }}
+                    >
+                      <Ionicons
+                        name="chevron-forward"
+                        size={18}
+                        color={theme.primary}
+                      />
+                    </Pressable>
+
+                  </View>
+
+
+                  <View
+                    style={
+                      styles.activityDateWeekdayRow
+                    }
+                  >
+                    {[
+                      'S',
+                      'M',
+                      'T',
+                      'W',
+                      'T',
+                      'F',
+                      'S',
+                    ].map((day, index) => (
+                      <Text
+                        key={`${day}-${index}`}
+                        style={
+                          styles.activityDateWeekdayText
+                        }
+                      >
+                        {day}
+                      </Text>
+                    ))}
+                  </View>
+
+
+                  <View
+                    style={
+                      styles.activityDateGrid
+                    }
+                  >
+                    {calendarDays.map(
+                      (date, index) => {
+                        if (!date) {
+                          return (
+                            <View
+                              key={`activity-empty-${index}`}
+                              style={
+                                styles.activityDateDay
+                              }
+                            />
+                          );
+                        }
+
+                        const isSelected =
+                          isSameDate(
+                            date,
+                            selectedDate
+                          );
+
+                        const isToday =
+                          isSameDate(
+                            date,
+                            today
+                          );
+
+                        const hasEvent =
+                          academicEvents.some(
+                            (event) =>
+                              event.date ===
+                              formatDateForStorage(
+                                date
+                              )
+                          );
+
+                        return (
+                          <Pressable
+                            key={
+                              formatDateForStorage(
+                                date
+                              )
+                            }
+                            style={[
+                              styles.activityDateDay,
+                              isSelected &&
+                                styles.activityDateSelectedDay,
+                              isToday &&
+                                !isSelected &&
+                                styles.activityDateTodayDay,
+                            ]}
+                            onPress={() => {
+                              setSelectedDate(date);
+                              setCalendarMonth(
+                                new Date(
+                                  date.getFullYear(),
+                                  date.getMonth(),
+                                  1
+                                )
+                              );
+                              setShowActivityDatePicker(
+                                false
+                              );
+                            }}
+                          >
+                            <Text
+                              style={[
+                                styles.activityDateDayText,
+                                isSelected &&
+                                  styles.activityDateSelectedDayText,
+                                isToday &&
+                                  !isSelected &&
+                                  styles.activityDateTodayDayText,
+                              ]}
+                            >
+                              {date.getDate()}
+                            </Text>
+
+                            {hasEvent && (
+                              <View
+                                style={
+                                  styles.activityDateEventDot
+                                }
+                              />
+                            )}
+                          </Pressable>
+                        );
+                      }
+                    )}
+                  </View>
+
+                </View>
+              )}
+
+
+              <Text
+                style={
+                  styles.helperText
+                }
+              >
+                Tap the calendar field to choose the date.
+              </Text>
+
+
+              {/* =================================================
+                  START TIME
+              ================================================= */}
+
+              <TimePicker
+                label="Start Time"
+                hour={startHour}
+                minute={startMinute}
+                period={startPeriod}
+                onHourChange={
+                  setStartHour
+                }
+                onMinuteChange={
+                  setStartMinute
+                }
+                onPeriodChange={
+                  setStartPeriod
+                }
+                theme={theme}
+              />
+
+
+              {/* =================================================
+                  END TIME
+              ================================================= */}
+
+              <TimePicker
+                label="End Time"
+                hour={endHour}
+                minute={endMinute}
+                period={endPeriod}
+                onHourChange={
+                  setEndHour
+                }
+                onMinuteChange={
+                  setEndMinute
+                }
+                onPeriodChange={
+                  setEndPeriod
+                }
+                theme={theme}
+              />
+
+
+              {/* =================================================
+                  DESCRIPTION
+              ================================================= */}
+
+              <Text
+                style={
+                  styles.formLabel
+                }
+              >
+                Description (optional)
+              </Text>
+
+
+              <View
+                style={[
+                  styles.inputContainer,
+                  styles.descriptionContainer,
+                ]}
+              >
+
+                <Ionicons
+                  name="document-text-outline"
+                  size={21}
+                  color={theme.primary}
+                  style={
+                    styles.descriptionIcon
+                  }
+                />
+
+
+                <TextInput
+                  style={[
+                    styles.input,
+                    styles.descriptionInput,
+                  ]}
+                  value={description}
+                  onChangeText={
+                    setDescription
+                  }
+                  placeholder="e.g. Review chapters 1–5"
+                  placeholderTextColor={
+                    theme.textMuted
+                  }
+                  multiline
+                  textAlignVertical="top"
+                />
+
+              </View>
+
+
+              {/* =================================================
+                  ICON PICKER
+              ================================================= */}
+
+              <Text
+                style={
+                  styles.formLabel
+                }
+              >
+                Choose an Icon
+              </Text>
+
+
+              <Text
+                style={
+                  styles.iconHelperText
+                }
+              >
+                Choose an icon that represents
+                this activity.
+              </Text>
+
+
+              <View
+                style={
+                  styles.iconGrid
+                }
+              >
+
+                {taskIcons.map(
+                  (icon) => {
+
+                    const selected =
+                      selectedIcon ===
+                      icon;
+
+
+                    return (
+
+                      <Pressable
+                        key={icon}
+                        style={[
+                          styles.iconButton,
+
+                          selected &&
+                            styles.selectedIconButton,
+                        ]}
+                        onPress={() =>
+                          setSelectedIcon(
+                            icon
+                          )
+                        }
+                      >
+
+                        <Ionicons
+                          name={icon}
+                          size={23}
+                          color={
+                            selected
+                              ? theme.primary
+                              : theme.textSecondary
+                          }
+                        />
+
+                      </Pressable>
+
+                    );
+                  }
+                )}
+
+              </View>
+
+
+              {/* =================================================
+                  REMINDER INFORMATION
+              ================================================= */}
+
+              <View
+                style={
+                  styles.reminderFormCard
+                }
+              >
+
+                <Ionicons
+                  name="notifications-outline"
+                  size={22}
+                  color={theme.primary}
+                />
+
+
+                <View
+                  style={
+                    styles.reminderFormText
+                  }
+                >
+
+                  <Text
+                    style={
+                      styles.reminderFormTitle
+                    }
+                  >
+                    Reminder
+                  </Text>
+
+
+                  <Text
+                    style={
+                      styles.reminderFormDescription
+                    }
+                  >
+                    {getReminderDescription(
+                      eventType
+                    )}
+                  </Text>
 
                 </View>
 
               </View>
 
 
-              {/* ==================================================
-                  ICON GRID
-                  ================================================== */}
-
-              <View style={styles.iconGrid}>
-
-                {taskIcons.map((icon) => {
-
-                  const isSelected =
-                    selectedIcon === icon;
-
-                  return (
-                    <Pressable
-                      key={icon}
-                      style={[
-                        styles.iconButton,
-
-                        isSelected &&
-                          styles.selectedIconButton,
-                      ]}
-                      onPress={() =>
-                        setSelectedIcon(icon)
-                      }
-                    >
-
-                      <Ionicons
-                        name={icon}
-                        size={24}
-                        color={
-                          isSelected
-                            ? theme.primary
-                            : theme.textSecondary
-                        }
-                      />
-
-                    </Pressable>
-                  );
-
-                })}
-
-              </View>
-
-
-              {/* ==================================================
-                  MODAL BUTTONS
-                  ================================================== */}
+              {/* =================================================
+                  BUTTONS
+              ================================================= */}
 
               <View
-                style={styles.modalButtons}
+                style={
+                  styles.modalButtons
+                }
               >
 
-                {/* CANCEL */}
-
                 <Pressable
-                  style={styles.cancelButton}
+                  style={
+                    styles.cancelButton
+                  }
                   onPress={() => {
 
                     resetForm();
 
-                    setShowAddModal(false);
+                    setShowAddModal(
+                      false
+                    );
 
                   }}
                 >
@@ -967,12 +2177,12 @@ export default function ScheduleScreen({
                 </Pressable>
 
 
-                {/* SAVE */}
-
                 <Pressable
-                  style={styles.saveButton}
+                  style={
+                    styles.saveButton
+                  }
                   onPress={
-                    handleAddStudyBlock
+                    handleAddAcademicEvent
                   }
                 >
 
@@ -982,12 +2192,13 @@ export default function ScheduleScreen({
                     color="#FFFFFF"
                   />
 
+
                   <Text
                     style={
                       styles.saveButtonText
                     }
                   >
-                    Add Study Block
+                    Add Activity
                   </Text>
 
                 </Pressable>
@@ -1002,143 +2213,584 @@ export default function ScheduleScreen({
 
       </Modal>
 
+
+      {/* =================================================
+          BOTTOM NAVIGATION
+      ================================================= */}
+
+      <View
+        style={
+          styles.bottomNavigation
+        }
+      >
+
+        {/* HOME */}
+
+        <Pressable
+          style={
+            styles.bottomItem
+          }
+          onPress={onGoHome}
+        >
+
+          <Ionicons
+            name="home-outline"
+            size={23}
+            color={theme.tabInactive}
+          />
+
+          <Text
+            style={
+              styles.bottomLabel
+            }
+          >
+            Home
+          </Text>
+
+        </Pressable>
+
+
+        {/* TASKS */}
+
+        <Pressable
+          style={
+            styles.bottomItem
+          }
+          onPress={onGoTasks}
+        >
+
+          <Ionicons
+            name="checkbox-outline"
+            size={23}
+            color={theme.tabInactive}
+          />
+
+          <Text
+            style={
+              styles.bottomLabel
+            }
+          >
+            Tasks
+          </Text>
+
+        </Pressable>
+
+
+        {/* SCHEDULE */}
+
+        <Pressable
+          style={
+            styles.bottomItem
+          }
+        >
+
+          <Ionicons
+            name="calendar"
+            size={23}
+            color={theme.primary}
+          />
+
+          <Text
+            style={[
+              styles.bottomLabel,
+              styles.activeBottomLabel,
+            ]}
+          >
+            Schedule
+          </Text>
+
+        </Pressable>
+
+
+        {/* MORE */}
+
+        <Pressable
+          style={
+            styles.bottomItem
+          }
+          onPress={onGoMore}
+        >
+
+          <Ionicons
+            name="ellipsis-horizontal"
+            size={23}
+            color={theme.tabInactive}
+          />
+
+          <Text
+            style={
+              styles.bottomLabel
+            }
+          >
+            More
+          </Text>
+
+        </Pressable>
+
+      </View>
+
     </View>
   );
 }
 
 
-// ======================================================
-// STUDY BLOCK CARD
-// ======================================================
+/* =====================================================
+   TIME PICKER
+===================================================== */
 
-type StudyBlockCardProps = {
-  block: StudyBlock;
+type TimePickerProps = {
+  label: string;
+  hour: number;
+  minute: number;
+  period: 'AM' | 'PM';
+  onHourChange: (
+    hour: number
+  ) => void;
+  onMinuteChange: (
+    minute: number
+  ) => void;
+  onPeriodChange: (
+    period: 'AM' | 'PM'
+  ) => void;
   theme: AppTheme;
 };
 
 
-function StudyBlockCard({
-  block,
+function TimePicker({
+  label,
+  hour,
+  minute,
+  period,
+  onHourChange,
+  onMinuteChange,
+  onPeriodChange,
   theme,
-}: StudyBlockCardProps) {
+}: TimePickerProps) {
 
-  // ====================================================
-  // LIGHT / DARK STUDY CARD COLORS
-  // ====================================================
-
-  const blockStyles = theme.background === '#07152F'
-
-    ? {
-
-        blue: {
-          background: '#102D52',
-          icon: '#2F8BFF',
-          time: '#9ABCE5',
-          dot: '#2F8BFF',
-        },
-
-        purple: {
-          background: '#2A2148',
-          icon: '#B48CFF',
-          time: '#C2A9EA',
-          dot: '#B48CFF',
-        },
-
-        green: {
-          background: '#12382B',
-          icon: '#24D994',
-          time: '#9BD8BE',
-          dot: '#24D994',
-        },
-
-        orange: {
-          background: '#40311B',
-          icon: '#FFD34E',
-          time: '#D8BE78',
-          dot: '#FFD34E',
-        },
-
-      }
-
-    : {
-
-        blue: {
-          background: '#E7F4FF',
-          icon: '#1261D6',
-          time: '#587BA5',
-          dot: '#1261D6',
-        },
-
-        purple: {
-          background: '#F0E7FF',
-          icon: '#7637D8',
-          time: '#7251A2',
-          dot: '#7637D8',
-        },
-
-        green: {
-          background: '#E3F8EA',
-          icon: '#20A65A',
-          time: '#4D8565',
-          dot: '#20A65A',
-        },
-
-        orange: {
-          background: '#FFF2D2',
-          icon: '#E99A00',
-          time: '#8D7444',
-          dot: '#E99A00',
-        },
-
-      };
+  const styles =
+    createStyles(theme);
 
 
-  const currentStyle =
-    blockStyles[block.color];
+  const increaseHour = () => {
+
+    onHourChange(
+      hour === 12
+        ? 1
+        : hour + 1
+    );
+  };
 
 
-  const styles = createStyles(theme);
+  const decreaseHour = () => {
+
+    onHourChange(
+      hour === 1
+        ? 12
+        : hour - 1
+    );
+  };
+
+
+  const increaseMinute = () => {
+
+    onMinuteChange(
+      minute === 55
+        ? 0
+        : minute + 5
+    );
+  };
+
+
+  const decreaseMinute = () => {
+
+    onMinuteChange(
+      minute === 0
+        ? 55
+        : minute - 5
+    );
+  };
 
 
   return (
-    <View style={styles.studyRow}>
 
-      {/* ==================================================
-          TIMELINE DOT
-          ================================================== */}
+    <View
+      style={
+        styles.timePickerContainer
+      }
+    >
+
+      <Text
+        style={
+          styles.formLabel
+        }
+      >
+        {label}
+      </Text>
+
 
       <View
-        style={[
-          styles.timelineDot,
+        style={
+          styles.timePickerBox
+        }
+      >
 
-          {
-            borderColor:
-              currentStyle.dot,
-          },
-        ]}
+        {/* HOUR */}
+
+        <View
+          style={
+            styles.timeColumn
+          }
+        >
+
+          <Pressable
+            style={
+              styles.timeArrowButton
+            }
+            onPress={
+              increaseHour
+            }
+          >
+
+            <Ionicons
+              name="chevron-up"
+              size={19}
+              color={theme.primary}
+            />
+
+          </Pressable>
+
+
+          <Text
+            style={
+              styles.timeValue
+            }
+          >
+            {String(hour).padStart(
+              2,
+              '0'
+            )}
+          </Text>
+
+
+          <Pressable
+            style={
+              styles.timeArrowButton
+            }
+            onPress={
+              decreaseHour
+            }
+          >
+
+            <Ionicons
+              name="chevron-down"
+              size={19}
+              color={theme.primary}
+            />
+
+          </Pressable>
+
+        </View>
+
+
+        <Text
+          style={
+            styles.timeColon
+          }
+        >
+          :
+        </Text>
+
+
+        {/* MINUTE */}
+
+        <View
+          style={
+            styles.timeColumn
+          }
+        >
+
+          <Pressable
+            style={
+              styles.timeArrowButton
+            }
+            onPress={
+              increaseMinute
+            }
+          >
+
+            <Ionicons
+              name="chevron-up"
+              size={19}
+              color={theme.primary}
+            />
+
+          </Pressable>
+
+
+          <Text
+            style={
+              styles.timeValue
+            }
+          >
+            {String(
+              minute
+            ).padStart(
+              2,
+              '0'
+            )}
+          </Text>
+
+
+          <Pressable
+            style={
+              styles.timeArrowButton
+            }
+            onPress={
+              decreaseMinute
+            }
+          >
+
+            <Ionicons
+              name="chevron-down"
+              size={19}
+              color={theme.primary}
+            />
+
+          </Pressable>
+
+        </View>
+
+
+        {/* AM / PM */}
+
+        <View
+          style={
+            styles.periodColumn
+          }
+        >
+
+          <Pressable
+            style={[
+              styles.periodButton,
+
+              period === 'AM' &&
+                styles.selectedPeriodButton,
+            ]}
+            onPress={() =>
+              onPeriodChange('AM')
+            }
+          >
+
+            <Text
+              style={[
+                styles.periodButtonText,
+
+                period === 'AM' &&
+                  styles.selectedPeriodButtonText,
+              ]}
+            >
+              AM
+            </Text>
+
+          </Pressable>
+
+
+          <Pressable
+            style={[
+              styles.periodButton,
+
+              period === 'PM' &&
+                styles.selectedPeriodButton,
+            ]}
+            onPress={() =>
+              onPeriodChange('PM')
+            }
+          >
+
+            <Text
+              style={[
+                styles.periodButtonText,
+
+                period === 'PM' &&
+                  styles.selectedPeriodButtonText,
+              ]}
+            >
+              PM
+            </Text>
+
+          </Pressable>
+
+        </View>
+
+      </View>
+
+    </View>
+  );
+}
+
+
+/* =====================================================
+   ACADEMIC EVENT CARD
+===================================================== */
+
+type AcademicEventCardProps = {
+  event: AcademicEvent;
+  theme: AppTheme;
+  onDelete: () => void;
+};
+
+
+function AcademicEventCard({
+  event,
+  theme,
+  onDelete,
+}: AcademicEventCardProps) {
+
+  const styles =
+    createStyles(theme);
+
+
+  const colors = {
+    blue: {
+      background:
+        theme.background === '#07152F'
+          ? '#173A69'
+          : '#E7F4FF',
+
+      icon:
+        theme.background === '#07152F'
+          ? '#65A8FF'
+          : '#1261D6',
+
+      time:
+        theme.background === '#07152F'
+          ? '#AFCBEB'
+          : '#587BA5',
+
+      dot:
+        theme.background === '#07152F'
+          ? '#65A8FF'
+          : '#1261D6',
+    },
+
+    purple: {
+      background:
+        theme.background === '#07152F'
+          ? '#332552'
+          : '#F0E7FF',
+
+      icon:
+        theme.background === '#07152F'
+          ? '#C19BFF'
+          : '#7637D8',
+
+      time:
+        theme.background === '#07152F'
+          ? '#C9B8E7'
+          : '#7251A2',
+
+      dot:
+        theme.background === '#07152F'
+          ? '#C19BFF'
+          : '#7637D8',
+    },
+
+    green: {
+      background:
+        theme.background === '#07152F'
+          ? '#193E32'
+          : '#E3F8EA',
+
+      icon:
+        theme.background === '#07152F'
+          ? '#5BE5A5'
+          : '#20A65A',
+
+      time:
+        theme.background === '#07152F'
+          ? '#A8D5BD'
+          : '#4D8565',
+
+      dot:
+        theme.background === '#07152F'
+          ? '#5BE5A5'
+          : '#20A65A',
+    },
+
+    orange: {
+      background:
+        theme.background === '#07152F'
+          ? '#493B1B'
+          : '#FFF2D2',
+
+      icon:
+        theme.background === '#07152F'
+          ? '#FFD75C'
+          : '#E99A00',
+
+      time:
+        theme.background === '#07152F'
+          ? '#D7C58D'
+          : '#8D7444',
+
+      dot:
+        theme.background === '#07152F'
+          ? '#FFD75C'
+          : '#E99A00',
+    },
+  };
+
+
+  const currentStyle =
+    colors[event.color];
+
+
+  return (
+
+    <View
+      style={
+        styles.eventRow
+      }
+    >
+
+      {/* TIMELINE */}
+
+      <View
+        style={
+          styles.timelineContainer
+        }
       >
 
         <View
           style={[
-            styles.timelineDotInner,
-
+            styles.timelineDot,
             {
-              backgroundColor:
+              borderColor:
                 currentStyle.dot,
             },
           ]}
-        />
+        >
+
+          <View
+            style={[
+              styles.timelineDotInner,
+              {
+                backgroundColor:
+                  currentStyle.dot,
+              },
+            ]}
+          />
+
+        </View>
 
       </View>
 
 
-      {/* ==================================================
-          STUDY CARD
-          ================================================== */}
+      {/* CARD */}
 
       <View
         style={[
-          styles.studyCard,
+          styles.eventCard,
 
           {
             backgroundColor:
@@ -1149,49 +2801,120 @@ function StudyBlockCard({
 
         <View
           style={
-            styles.studyIconContainer
+            styles.eventIconContainer
           }
         >
 
           <Ionicons
-            name={block.icon}
+            name={event.icon}
             size={30}
-            color={currentStyle.icon}
+            color={
+              currentStyle.icon
+            }
           />
 
         </View>
 
 
-        <View style={styles.studyInfo}>
+        <View
+          style={
+            styles.eventInfo
+          }
+        >
+
+          <View
+            style={
+              styles.eventTopRow
+            }
+          >
+
+            <Text
+              style={[
+                styles.eventTime,
+                {
+                  color:
+                    currentStyle.time,
+                },
+              ]}
+            >
+              {event.startTime}
+              {' – '}
+              {event.endTime}
+            </Text>
+
+
+            <View
+              style={
+                styles.eventTypeBadge
+              }
+            >
+
+              <Text
+                style={
+                  styles.eventTypeBadgeText
+                }
+              >
+                {event.eventType}
+              </Text>
+
+            </View>
+
+          </View>
+
 
           <Text
-            style={[
-              styles.studyTime,
-
-              {
-                color:
-                  currentStyle.time,
-              },
-            ]}
+            style={
+              styles.eventSubject
+            }
           >
-            {block.time}
+            {event.subject}
           </Text>
 
 
-          <Text
-            style={styles.studySubject}
-          >
-            {block.subject}
-          </Text>
+          {event.description.trim() !== '' && (
+            <Text
+              style={
+                styles.eventDescription
+              }
+            >
+              {event.description}
+            </Text>
+          )}
 
 
-          <Text
-            style={styles.studyDescription}
-          >
-            {block.description}
-          </Text>
+          {event.date !== '' && (
+
+            <Text
+              style={
+                styles.eventDateText
+              }
+            >
+              {formatDisplayDateFromString(
+                event.date
+              )}
+            </Text>
+
+          )}
 
         </View>
+
+
+        <Pressable
+          style={
+            styles.eventDeleteButton
+          }
+          onPress={
+            onDelete
+          }
+        >
+
+          <Ionicons
+            name="trash-outline"
+            size={19}
+            color={theme.textMuted}
+          />
+
+        </Pressable>
 
       </View>
 
@@ -1200,44 +2923,427 @@ function StudyBlockCard({
 }
 
 
-// ======================================================
-// HELPER: NEXT COLOR
-// ======================================================
+/* =====================================================
+   DATABASE CONVERTER
+===================================================== */
+
+function convertDatabaseEvent(
+  event: AcademicEventRecord
+): AcademicEvent {
+
+  return {
+
+    id:
+      event.id,
+
+    eventType:
+      event.eventType,
+
+    subject:
+      event.subject,
+
+    date:
+      event.date,
+
+    startTime:
+      event.startTime,
+
+    endTime:
+      event.endTime,
+
+    description:
+      event.description,
+
+    color:
+      event.color,
+
+    icon:
+      event.icon as IconName,
+  };
+}
+
+
+/* =====================================================
+   FORMAT TIME
+===================================================== */
+
+function formatTime(
+  hour: number,
+  minute: number,
+  period: 'AM' | 'PM'
+): string {
+
+  return (
+    `${String(hour).padStart(
+      2,
+      '0'
+    )}:` +
+    `${String(minute).padStart(
+      2,
+      '0'
+    )} ${period}`
+  );
+}
+
+
+/* =====================================================
+   FORMAT DATE FOR SQLITE
+===================================================== */
+
+function formatDateForStorage(
+  date: Date
+): string {
+
+  const year =
+    date.getFullYear();
+
+  const month =
+    String(
+      date.getMonth() + 1
+    ).padStart(2, '0');
+
+  const day =
+    String(
+      date.getDate()
+    ).padStart(2, '0');
+
+
+  return `${year}-${month}-${day}`;
+}
+
+
+/* =====================================================
+   DISPLAY DATE
+===================================================== */
+
+function formatDisplayDate(
+  date: Date
+): string {
+
+  return date.toLocaleDateString(
+    'en-US',
+    {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }
+  );
+}
+
+
+function formatDisplayDateFromString(
+  dateString: string
+): string {
+
+  const parts =
+    dateString.split('-');
+
+
+  if (parts.length !== 3) {
+    return dateString;
+  }
+
+
+  const date =
+    new Date(
+      Number(parts[0]),
+      Number(parts[1]) - 1,
+      Number(parts[2])
+    );
+
+
+  return formatDisplayDate(
+    date
+  );
+}
+
+
+/* =====================================================
+   MONTH NAME
+===================================================== */
+
+function getMonthName(
+  date: Date
+): string {
+
+  return date.toLocaleDateString(
+    'en-US',
+    {
+      month: 'long',
+    }
+  );
+}
+
+
+/* =====================================================
+   SAME DATE
+===================================================== */
+
+function isSameDate(
+  first: Date,
+  second: Date
+): boolean {
+
+  return (
+    first.getFullYear() ===
+      second.getFullYear() &&
+
+    first.getMonth() ===
+      second.getMonth() &&
+
+    first.getDate() ===
+      second.getDate()
+  );
+}
+
+
+/* =====================================================
+   CALENDAR
+===================================================== */
+
+function buildCalendarDays(
+  month: Date
+): (Date | null)[] {
+
+  const year =
+    month.getFullYear();
+
+  const monthIndex =
+    month.getMonth();
+
+
+  const firstDay =
+    new Date(
+      year,
+      monthIndex,
+      1
+    ).getDay();
+
+
+  const daysInMonth =
+    new Date(
+      year,
+      monthIndex + 1,
+      0
+    ).getDate();
+
+
+  const days:
+    (Date | null)[] =
+    [];
+
+
+  for (
+    let i = 0;
+    i < firstDay;
+    i++
+  ) {
+
+    days.push(null);
+  }
+
+
+  for (
+    let day = 1;
+    day <= daysInMonth;
+    day++
+  ) {
+
+    days.push(
+      new Date(
+        year,
+        monthIndex,
+        day
+      )
+    );
+  }
+
+
+  while (
+    days.length % 7 !== 0
+  ) {
+
+    days.push(null);
+  }
+
+
+  return days;
+}
+
+
+/* =====================================================
+   WEEK DATES
+===================================================== */
+
+function getWeekDates(
+  date: Date
+): Date[] {
+
+  const start =
+    new Date(date);
+
+
+  start.setDate(
+    date.getDate() -
+      date.getDay()
+  );
+
+
+  return Array.from(
+    { length: 7 },
+    (_, index) => {
+
+      const current =
+        new Date(start);
+
+      current.setDate(
+        start.getDate() +
+          index
+      );
+
+      return current;
+    }
+  );
+}
+
+
+/* =====================================================
+   EVENT SORTING
+===================================================== */
+
+function compareEventsByTime(
+  a: AcademicEvent,
+  b: AcademicEvent
+): number {
+
+  return (
+    timeToMinutes(
+      a.startTime
+    ) -
+    timeToMinutes(
+      b.startTime
+    )
+  );
+}
+
+
+function compareEventsByDateAndTime(
+  a: AcademicEvent,
+  b: AcademicEvent
+): number {
+
+  if (
+    a.date !== b.date
+  ) {
+
+    return a.date.localeCompare(
+      b.date
+    );
+  }
+
+
+  return compareEventsByTime(
+    a,
+    b
+  );
+}
+
+
+/* =====================================================
+   TIME TO MINUTES
+===================================================== */
+
+function timeToMinutes(
+  time: string
+): number {
+
+  const match =
+    time.match(
+      /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+    );
+
+
+  if (!match) {
+    return 0;
+  }
+
+
+  let hour =
+    Number(match[1]);
+
+  const minute =
+    Number(match[2]);
+
+  const period =
+    match[3].toUpperCase();
+
+
+  if (
+    period === 'AM' &&
+    hour === 12
+  ) {
+
+    hour = 0;
+  }
+
+
+  if (
+    period === 'PM' &&
+    hour !== 12
+  ) {
+
+    hour += 12;
+  }
+
+
+  return (
+    hour * 60 +
+    minute
+  );
+}
+
+
+/* =====================================================
+   COLOR
+===================================================== */
 
 function getNextColor(
   currentLength: number
-): StudyBlockColor {
+): AcademicEventColor {
 
-  const colors: StudyBlockColor[] = [
-    'blue',
-    'purple',
-    'green',
-    'orange',
-  ];
+  const colors:
+    AcademicEventColor[] = [
+      'blue',
+      'purple',
+      'green',
+      'orange',
+    ];
+
 
   return colors[
-    currentLength % colors.length
+    currentLength %
+      colors.length
   ];
 }
 
 
-// ======================================================
-// HELPER: SUBJECT ICON
-// ======================================================
+/* =====================================================
+   ICON SUGGESTION
+===================================================== */
 
 function getIconForSubject(
   subject: string
 ): IconName {
 
-  const lowerSubject =
+  const value =
     subject.toLowerCase();
 
 
   if (
-    lowerSubject.includes('math') ||
-    lowerSubject.includes('calculus') ||
-    lowerSubject.includes('algebra') ||
-    lowerSubject.includes('statistics')
+    value.includes('math') ||
+    value.includes('algebra') ||
+    value.includes('calculus') ||
+    value.includes('statistics')
   ) {
 
     return 'calculator-outline';
@@ -1245,10 +3351,9 @@ function getIconForSubject(
 
 
   if (
-    lowerSubject.includes('english') ||
-    lowerSubject.includes('language') ||
-    lowerSubject.includes('literature') ||
-    lowerSubject.includes('reading')
+    value.includes('english') ||
+    value.includes('literature') ||
+    value.includes('reading')
   ) {
 
     return 'book-outline';
@@ -1256,10 +3361,10 @@ function getIconForSubject(
 
 
   if (
-    lowerSubject.includes('science') ||
-    lowerSubject.includes('biology') ||
-    lowerSubject.includes('chemistry') ||
-    lowerSubject.includes('physics')
+    value.includes('science') ||
+    value.includes('chemistry') ||
+    value.includes('biology') ||
+    value.includes('physics')
   ) {
 
     return 'flask-outline';
@@ -1267,8 +3372,8 @@ function getIconForSubject(
 
 
   if (
-    lowerSubject.includes('history') ||
-    lowerSubject.includes('social')
+    value.includes('history') ||
+    value.includes('social')
   ) {
 
     return 'library-outline';
@@ -1276,10 +3381,11 @@ function getIconForSubject(
 
 
   if (
-    lowerSubject.includes('programming') ||
-    lowerSubject.includes('coding') ||
-    lowerSubject.includes('computer') ||
-    lowerSubject.includes('it')
+    value.includes('program') ||
+    value.includes('coding') ||
+    value.includes('computer') ||
+    value.includes('it') ||
+    value.includes('information technology')
   ) {
 
     return 'laptop-outline';
@@ -1287,37 +3393,28 @@ function getIconForSubject(
 
 
   if (
-    lowerSubject.includes('art') ||
-    lowerSubject.includes('design')
+    value.includes('project')
   ) {
 
-    return 'color-palette-outline';
+    return 'folder-outline';
   }
 
 
   if (
-    lowerSubject.includes('music')
+    value.includes('assignment') ||
+    value.includes('essay') ||
+    value.includes('writing')
   ) {
 
-    return 'musical-notes-outline';
+    return 'create-outline';
   }
 
 
   if (
-    lowerSubject.includes('presentation') ||
-    lowerSubject.includes('report')
+    value.includes('presentation')
   ) {
 
     return 'mic-outline';
-  }
-
-
-  if (
-    lowerSubject.includes('project') ||
-    lowerSubject.includes('group')
-  ) {
-
-    return 'people-outline';
   }
 
 
@@ -1325,18 +3422,276 @@ function getIconForSubject(
 }
 
 
-// ======================================================
-// STYLES
-// ======================================================
+/* =====================================================
+   REMINDER DESCRIPTION
+===================================================== */
+
+function getReminderDescription(
+  eventType: EventType
+): string {
+
+  if (
+    eventType === 'Quiz'
+  ) {
+
+    return (
+      'You will be reminded 3 days, ' +
+      '2 days, and 1 day before the quiz.'
+    );
+  }
+
+
+  if (
+    eventType === 'Exam'
+  ) {
+
+    return (
+      'You will be reminded 7 days, ' +
+      '3 days, and 1 day before the exam.'
+    );
+  }
+
+
+  return (
+    'This activity will be added to your ' +
+    'schedule without automatic deadline reminders.'
+  );
+}
+
+
+/* =====================================================
+   SCHEDULE NOTIFICATIONS
+===================================================== */
+
+async function scheduleNotificationsForEvent(
+  event: AcademicEvent
+): Promise<void> {
+
+  let reminderDays:
+    number[] = [];
+
+
+  if (
+    event.eventType === 'Quiz'
+  ) {
+
+    reminderDays = [
+      3,
+      2,
+      1,
+    ];
+
+  } else if (
+    event.eventType === 'Exam'
+  ) {
+
+    reminderDays = [
+      7,
+      3,
+      1,
+    ];
+  }
+
+
+  if (
+    reminderDays.length === 0
+  ) {
+
+    return;
+  }
+
+
+  const permission =
+    await Notifications.getPermissionsAsync();
+
+
+  let finalPermission =
+    permission;
+
+
+  if (
+    finalPermission.status !==
+    'granted'
+  ) {
+
+    finalPermission =
+      await Notifications.requestPermissionsAsync();
+  }
+
+
+  if (
+    finalPermission.status !==
+    'granted'
+  ) {
+
+    return;
+  }
+
+
+  const eventDate =
+    parseDateTime(
+      event.date,
+      event.startTime
+    );
+
+
+  for (
+    const daysBefore
+      of reminderDays
+  ) {
+
+    const reminderDate =
+      new Date(eventDate);
+
+
+    reminderDate.setDate(
+      reminderDate.getDate() -
+        daysBefore
+    );
+
+
+    /*
+     * Don't schedule notifications
+     * that are already in the past.
+     */
+
+    if (
+      reminderDate.getTime() <=
+      Date.now()
+    ) {
+
+      continue;
+    }
+
+
+    await Notifications.scheduleNotificationAsync({
+
+      content: {
+
+        title:
+          `${event.eventType} Reminder`,
+
+        body:
+          `${event.subject} is in ${daysBefore} ` +
+          `${daysBefore === 1 ? 'day' : 'days'}.`,
+
+        data: {
+          eventId:
+            event.id,
+
+          eventType:
+            event.eventType,
+        },
+
+      },
+
+      trigger: {
+        type:
+          Notifications
+            .SchedulableTriggerInputTypes
+            .DATE,
+
+        date:
+          reminderDate,
+      },
+
+    });
+  }
+}
+
+
+/* =====================================================
+   PARSE DATE + TIME
+===================================================== */
+
+function parseDateTime(
+  dateString: string,
+  timeString: string
+): Date {
+
+  const dateParts =
+    dateString.split('-');
+
+
+  const date =
+    new Date(
+      Number(dateParts[0]),
+      Number(dateParts[1]) - 1,
+      Number(dateParts[2])
+    );
+
+
+  const match =
+    timeString.match(
+      /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i
+    );
+
+
+  if (!match) {
+
+    date.setHours(
+      9,
+      0,
+      0,
+      0
+    );
+
+    return date;
+  }
+
+
+  let hour =
+    Number(match[1]);
+
+  const minute =
+    Number(match[2]);
+
+  const period =
+    match[3].toUpperCase();
+
+
+  if (
+    period === 'AM' &&
+    hour === 12
+  ) {
+
+    hour = 0;
+  }
+
+
+  if (
+    period === 'PM' &&
+    hour !== 12
+  ) {
+
+    hour += 12;
+  }
+
+
+  date.setHours(
+    hour,
+    minute,
+    0,
+    0
+  );
+
+
+  return date;
+}
+
+
+/* =====================================================
+   STYLES
+===================================================== */
 
 const createStyles = (
   theme: AppTheme
 ) =>
   StyleSheet.create({
 
-    // ==================================================
-    // MAIN CONTAINER
-    // ==================================================
+    /* =================================================
+       SCREEN
+    ================================================= */
 
     container: {
       flex: 1,
@@ -1344,63 +3699,75 @@ const createStyles = (
         theme.background,
     },
 
-
-    // ==================================================
-    // SCROLL CONTENT
-    // ==================================================
-
     scrollContent: {
-      paddingHorizontal: 16,
-      paddingTop: 30,
-      paddingBottom: 105,
+      paddingBottom: 140,
     },
 
 
-    // ==================================================
-    // HEADER
-    // ==================================================
+    /* =================================================
+       HEADER
+    ================================================= */
 
     header: {
+      backgroundColor:
+        theme.background,
+
+      paddingHorizontal: 18,
+
+      paddingTop: 40,
+
+      paddingBottom: 4,
+    },
+
+    headerTop: {
       flexDirection: 'row',
+
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 18,
+
+      justifyContent:
+        'space-between',
     },
 
     headerTitle: {
-      fontSize: 27,
+      fontSize: 24,
+
       fontWeight: '800',
+
       color: theme.text,
     },
 
-    headerCalendarButton: {
-      width: 42,
-      height: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
+    headerSubtitle: {
+      display: 'none',
     },
 
+    /* =================================================
+       VIEW SELECTOR
+    ================================================= */
 
-    // ==================================================
-    // DAY / WEEK SELECTOR
-    // ==================================================
+    viewSelectorContainer: {
+      height: 48,
 
-    viewSelector: {
-      height: 43,
+      marginHorizontal: 18,
+
+      marginTop: 8,
+
       backgroundColor:
-        theme.cardSecondary,
-      borderRadius: 13,
-      flexDirection: 'row',
+        theme.primaryLight,
+
+      borderRadius: 12,
+
       padding: 3,
-      marginBottom: 17,
-      borderWidth: 1,
-      borderColor: theme.border,
+
+      flexDirection: 'row',
     },
 
-    viewButton: {
+    viewSelectorButton: {
       flex: 1,
-      borderRadius: 11,
+
+      borderRadius: 9,
+
       alignItems: 'center',
+
       justifyContent: 'center',
     },
 
@@ -1409,412 +3776,1342 @@ const createStyles = (
         theme.primary,
     },
 
-    viewButtonText: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: theme.textSecondary,
+    viewSelectorText: {
+      fontSize: 13,
+
+      fontWeight: '600',
+
+      color:
+        theme.textSecondary,
     },
 
-    selectedViewButtonText: {
+    selectedViewText: {
       color: '#FFFFFF',
+
+      fontWeight: '700',
     },
 
 
-    // ==================================================
-    // DATE NAVIGATION
-    // ==================================================
+    /* =================================================
+       CALENDAR
+    ================================================= */
 
-    dateNavigation: {
-      height: 65,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: 10,
-    },
+    calendarCard: {
+      backgroundColor:
+        theme.card,
 
-    arrowButton: {
-      width: 35,
-      height: 45,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+      marginHorizontal: 18,
 
-    dateCenter: {
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
+      marginTop: 14,
 
-    dateRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
+      borderRadius: 18,
 
-    dateText: {
-      fontSize: 17,
-      fontWeight: '800',
-      color: theme.text,
-      marginLeft: 9,
-    },
+      padding: 15,
 
-    dayText: {
-      fontSize: 12,
-      color: theme.textSecondary,
-      marginTop: 2,
-    },
-
-
-    // ==================================================
-    // SCHEDULE
-    // ==================================================
-
-    scheduleContainer: {
-      marginTop: 2,
-    },
-
-    studyRow: {
-      minHeight: 90,
-      flexDirection: 'row',
-      alignItems: 'center',
-    },
-
-    timelineDot: {
-      width: 16,
-      height: 16,
-      borderRadius: 8,
-      borderWidth: 3,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 4,
-    },
-
-    timelineDotInner: {
-      width: 6,
-      height: 6,
-      borderRadius: 3,
-    },
-
-    studyCard: {
-      flex: 1,
-      minHeight: 86,
-      borderRadius: 14,
-      paddingHorizontal: 13,
-      paddingVertical: 10,
-      flexDirection: 'row',
-      alignItems: 'center',
       borderWidth: 1,
+
       borderColor:
         theme.border,
+
+      elevation: 1,
     },
 
-    studyIconContainer: {
-      width: 43,
+    calendarHeader: {
+      flexDirection: 'row',
+
       alignItems: 'center',
+
+      justifyContent:
+        'space-between',
+
+      marginBottom: 13,
+    },
+
+    calendarArrow: {
+      width: 38,
+
+      height: 38,
+
+      borderRadius: 12,
+
+      backgroundColor:
+        theme.primaryLight,
+
+      alignItems: 'center',
+
       justifyContent: 'center',
-      marginRight: 7,
     },
 
-    studyInfo: {
-      flex: 1,
-    },
-
-    studyTime: {
-      fontSize: 12,
-      fontWeight: '600',
-      marginBottom: 3,
-    },
-
-    studySubject: {
+    calendarMonthTitle: {
       fontSize: 16,
+
       fontWeight: '800',
+
       color: theme.text,
-      marginBottom: 1,
     },
 
-    studyDescription: {
-      fontSize: 12.5,
-      color: theme.textSecondary,
+    weekdayRow: {
+      flexDirection: 'row',
+
+      marginBottom: 4,
     },
 
+    weekdayText: {
+      width: '14.2857%',
 
-    // ==================================================
-    // ADD STUDY BUTTON
-    // ==================================================
+      textAlign: 'center',
 
-    addStudyButton: {
-      height: 54,
+      fontSize: 11,
+
+      fontWeight: '700',
+
+      color:
+        theme.textMuted,
+    },
+
+    calendarGrid: {
+      flexDirection: 'row',
+
+      flexWrap: 'wrap',
+    },
+
+    calendarDay: {
+      width: '14.2857%',
+
+      height: 42,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      position: 'relative',
+    },
+
+    calendarDayText: {
+      fontSize: 13,
+
+      color: theme.text,
+
+      fontWeight: '600',
+    },
+
+    selectedCalendarDay: {
+      width: '14.2857%',
+
+      height: 42,
+
+      borderRadius: 12,
+
       backgroundColor:
         theme.primary,
-      borderRadius: 17,
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginTop: 12,
-      elevation: 2,
     },
 
-    addStudyButtonText: {
+    selectedCalendarDayText: {
       color: '#FFFFFF',
-      fontSize: 16,
-      fontWeight: '700',
-      marginLeft: 7,
+
+      fontWeight: '800',
     },
 
+    todayCalendarDay: {
+      borderRadius: 12,
 
-    // ==================================================
-    // BOTTOM NAVIGATION
-    // ==================================================
-
-    bottomNavigation: {
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      height: 70,
       backgroundColor:
-        theme.tabBar,
-      borderTopWidth: 1,
-      borderTopColor:
-        theme.border,
+        theme.primaryLight,
+    },
+
+    todayCalendarDayText: {
+      color: theme.primary,
+
+      fontWeight: '800',
+    },
+
+    eventDot: {
+      position: 'absolute',
+
+      bottom: 4,
+
+      width: 5,
+
+      height: 5,
+
+      borderRadius: 3,
+
+      backgroundColor:
+        theme.primary,
+    },
+
+
+    /* =================================================
+       SELECTED DATE
+    ================================================= */
+
+    selectedDateHeader: {
+      marginHorizontal: 18,
+
+      marginTop: 22,
+
+      marginBottom: 12,
+
       flexDirection: 'row',
-      justifyContent: 'space-around',
+
       alignItems: 'center',
+
+      justifyContent:
+        'space-between',
     },
 
-    bottomItem: {
-      width: 75,
-      height: 60,
-      alignItems: 'center',
-      justifyContent: 'center',
+    selectedDateTitle: {
+      fontSize: 19,
+
+      fontWeight: '800',
+
+      color: theme.text,
     },
 
-    bottomLabel: {
-      fontSize: 10.5,
+    selectedDateSubtitle: {
+      fontSize: 12,
+
       color:
-        theme.tabInactive,
+        theme.textSecondary,
+
       marginTop: 3,
     },
 
-    activeLabel: {
-      color:
-        theme.primary,
-      fontWeight: '700',
-    },
+    eventCountBadge: {
+      minWidth: 34,
 
+      height: 34,
 
-    // ==================================================
-    // MODAL OVERLAY
-    // ==================================================
+      paddingHorizontal: 9,
 
-    modalOverlay: {
-      flex: 1,
+      borderRadius: 17,
+
       backgroundColor:
-        'rgba(0, 0, 0, 0.55)',
-      justifyContent: 'flex-end',
+        theme.primaryLight,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+    },
+
+    eventCountText: {
+      color: theme.primary,
+
+      fontSize: 13,
+
+      fontWeight: '800',
     },
 
 
-    // ==================================================
-    // MODAL CONTAINER
-    // ==================================================
+    /* =================================================
+       EVENT CARD
+    ================================================= */
 
-    modalContainer: {
-      maxHeight: '92%',
+    eventRow: {
+      flexDirection: 'row',
+
+      marginHorizontal: 18,
+
+      marginBottom: 11,
+    },
+
+    timelineContainer: {
+      width: 22,
+
+      alignItems: 'center',
+
+      paddingTop: 20,
+    },
+
+    timelineDot: {
+      width: 15,
+
+      height: 15,
+
+      borderRadius: 8,
+
+      borderWidth: 2,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      backgroundColor:
+        theme.background,
+    },
+
+    timelineDotInner: {
+      width: 5,
+
+      height: 5,
+
+      borderRadius: 3,
+    },
+
+    eventCard: {
+      flex: 1,
+
+      minHeight: 105,
+
+      borderRadius: 17,
+
+      padding: 13,
+
+      flexDirection: 'row',
+
+      alignItems: 'center',
+    },
+
+    eventIconContainer: {
+      width: 51,
+
+      height: 51,
+
+      borderRadius: 15,
+
+      backgroundColor:
+        'rgba(255,255,255,0.55)',
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      marginRight: 11,
+    },
+
+    eventInfo: {
+      flex: 1,
+
+      minWidth: 0,
+    },
+
+    eventTopRow: {
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      marginBottom: 3,
+    },
+
+    eventTime: {
+      fontSize: 11,
+
+      fontWeight: '700',
+
+      flex: 1,
+    },
+
+    eventTypeBadge: {
+      paddingHorizontal: 7,
+
+      paddingVertical: 3,
+
+      borderRadius: 7,
+
+      backgroundColor:
+        'rgba(255,255,255,0.65)',
+
+      marginLeft: 5,
+    },
+
+    eventTypeBadgeText: {
+      fontSize: 9,
+
+      fontWeight: '800',
+
+      color:
+        theme.textSecondary,
+    },
+
+    eventSubject: {
+      fontSize: 16,
+
+      fontWeight: '800',
+
+      color: theme.text,
+
+      marginBottom: 3,
+    },
+
+    eventDescription: {
+      fontSize: 11.5,
+
+      color:
+        theme.textSecondary,
+
+      lineHeight: 16,
+    },
+
+    eventDateText: {
+      fontSize: 10,
+
+      color:
+        theme.textMuted,
+
+      marginTop: 5,
+    },
+
+    eventDeleteButton: {
+      width: 34,
+
+      height: 34,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      marginLeft: 3,
+    },
+
+
+    /* =================================================
+       EMPTY STATE
+    ================================================= */
+
+    emptyCard: {
+      marginHorizontal: 18,
+
       backgroundColor:
         theme.card,
-      borderTopLeftRadius: 25,
-      borderTopRightRadius: 25,
-      paddingHorizontal: 20,
-      paddingTop: 20,
-      paddingBottom: 30,
+
+      borderRadius: 18,
+
+      paddingVertical: 35,
+
+      paddingHorizontal: 25,
+
+      alignItems: 'center',
+
       borderWidth: 1,
+
       borderColor:
         theme.border,
     },
 
+    emptyIconCircle: {
+      width: 65,
 
-    // ==================================================
-    // MODAL HEADER
-    // ==================================================
+      height: 65,
 
-    modalHeader: {
+      borderRadius: 33,
+
+      backgroundColor:
+        theme.primaryLight,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      marginBottom: 12,
+    },
+
+    emptyTitle: {
+      fontSize: 16,
+
+      fontWeight: '800',
+
+      color: theme.text,
+
+      marginTop: 9,
+    },
+
+    emptyText: {
+      fontSize: 12,
+
+      lineHeight: 18,
+
+      textAlign: 'center',
+
+      color:
+        theme.textSecondary,
+
+      marginTop: 5,
+
+      maxWidth: 280,
+    },
+
+    floatingAddButton: {
+      position: 'absolute',
+      right: 18,
+      bottom: 82,
+      height: 50,
+      paddingHorizontal: 18,
+      borderRadius: 25,
+      backgroundColor: theme.primary,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      elevation: 5,
+    },
+
+    floatingAddButtonText: {
+      color: '#FFFFFF',
+      fontSize: 13,
+      fontWeight: '800',
+    },
+
+    upcomingSection: {
+      marginTop: 24,
+    },
+
+    upcomingHeader: {
+      marginHorizontal: 18,
+      marginBottom: 12,
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'space-between',
-      marginBottom: 18,
+    },
+
+    upcomingTitle: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: theme.text,
+    },
+
+    upcomingSubtitle: {
+      marginTop: 3,
+      fontSize: 11.5,
+      color: theme.textSecondary,
+    },
+
+    upcomingCountBadge: {
+      minWidth: 34,
+      height: 34,
+      paddingHorizontal: 9,
+      borderRadius: 17,
+      backgroundColor: theme.primaryLight,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+
+    upcomingCountText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: theme.primary,
+    },
+
+
+    /* =================================================
+       REMINDER INFO
+    ================================================= */
+
+    reminderInfoCard: {
+      marginHorizontal: 18,
+
+      marginTop: 17,
+
+      backgroundColor:
+        theme.card,
+
+      borderRadius: 16,
+
+      padding: 14,
+
+      flexDirection: 'row',
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+    },
+
+    reminderIconCircle: {
+      width: 42,
+
+      height: 42,
+
+      borderRadius: 21,
+
+      backgroundColor:
+        theme.primaryLight,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      marginRight: 11,
+    },
+
+    reminderInfoText: {
+      flex: 1,
+    },
+
+    reminderInfoTitle: {
+      fontSize: 13,
+
+      fontWeight: '800',
+
+      color: theme.text,
+    },
+
+    reminderInfoDescription: {
+      fontSize: 11,
+
+      lineHeight: 16,
+
+      color:
+        theme.textSecondary,
+
+      marginTop: 3,
+    },
+
+
+    /* =================================================
+       MODAL
+    ================================================= */
+
+    modalOverlay: {
+      flex: 1,
+
+      backgroundColor:
+        'rgba(0,0,0,0.45)',
+
+      justifyContent: 'flex-end',
+    },
+
+    modalContainer: {
+      backgroundColor:
+        theme.background,
+
+      borderTopLeftRadius: 26,
+
+      borderTopRightRadius: 26,
+
+      maxHeight: '94%',
+
+      paddingTop: 18,
+    },
+
+    modalHeader: {
+      paddingHorizontal: 19,
+
+      paddingBottom: 14,
+
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      justifyContent:
+        'space-between',
+
+      borderBottomWidth: 1,
+
+      borderBottomColor:
+        theme.border,
     },
 
     modalTitle: {
-      fontSize: 22,
+      fontSize: 21,
+
       fontWeight: '800',
+
       color: theme.text,
     },
 
     modalSubtitle: {
-      fontSize: 12,
+      fontSize: 11.5,
+
       color:
         theme.textSecondary,
+
       marginTop: 3,
     },
 
-    closeButton: {
-      width: 38,
-      height: 38,
-      borderRadius: 19,
+    modalCloseButton: {
+      width: 39,
+
+      height: 39,
+
+      borderRadius: 12,
+
       backgroundColor:
-        theme.cardSecondary,
+        theme.card,
+
       alignItems: 'center',
+
       justifyContent: 'center',
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+    },
+
+    modalScrollContent: {
+      paddingHorizontal: 18,
+
+      paddingTop: 17,
+
+      paddingBottom: 30,
     },
 
 
-    // ==================================================
-    // INPUTS
-    // ==================================================
+    /* =================================================
+       FORM
+    ================================================= */
 
-    inputLabel: {
+    formLabel: {
       fontSize: 13,
-      fontWeight: '700',
+
+      fontWeight: '800',
+
       color: theme.text,
-      marginBottom: 7,
+
+      marginBottom: 8,
+
+      marginTop: 14,
+    },
+
+    inputContainer: {
+      minHeight: 51,
+
+      borderRadius: 14,
+
+      backgroundColor:
+        theme.inputBackground,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.inputBorder,
+
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      paddingHorizontal: 13,
     },
 
     input: {
-      height: 48,
-      borderWidth: 1,
-      borderColor:
-        theme.inputBorder,
-      borderRadius: 12,
-      paddingHorizontal: 13,
-      fontSize: 14,
-      color: theme.text,
-      backgroundColor:
-        theme.inputBackground,
-      marginBottom: 14,
-    },
-
-    timeRow: {
-      flexDirection: 'row',
-      gap: 10,
-    },
-
-    timeInputContainer: {
       flex: 1,
+
+      minHeight: 49,
+
+      fontSize: 13.5,
+
+      color: theme.text,
+
+      marginLeft: 9,
+    },
+
+    descriptionContainer: {
+      alignItems: 'flex-start',
+
+      paddingTop: 11,
+
+      minHeight: 105,
+    },
+
+    descriptionIcon: {
+      marginTop: 3,
     },
 
     descriptionInput: {
-      height: 75,
-      paddingTop: 12,
+      minHeight: 82,
+
+      textAlignVertical: 'top',
+
+    },
+
+    helperText: {
+      fontSize: 10.5,
+
+      lineHeight: 15,
+
+      color:
+        theme.textMuted,
+
+      marginTop: 5,
+    },
+
+    iconHelperText: {
+      fontSize: 11,
+
+      color:
+        theme.textSecondary,
+
+      marginTop: -3,
+
+      marginBottom: 8,
     },
 
 
-    // ==================================================
-    // ICON PICKER
-    // ==================================================
+    /* =================================================
+       ACTIVITY TYPE
+    ================================================= */
 
-    iconPickerHeader: {
+    eventTypeGrid: {
       flexDirection: 'row',
+
+      flexWrap: 'wrap',
+
+      gap: 8,
+    },
+
+    eventTypeButton: {
+      width: '31.8%',
+
+      minHeight: 55,
+
+      borderRadius: 13,
+
+      backgroundColor:
+        theme.card,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+
       alignItems: 'center',
-      justifyContent: 'space-between',
-      marginTop: 3,
+
+      justifyContent: 'center',
+
+      paddingHorizontal: 3,
+    },
+
+    selectedEventTypeButton: {
+      backgroundColor:
+        theme.primary,
+
+      borderColor:
+        theme.primary,
+    },
+
+    eventTypeText: {
+      fontSize: 10.5,
+
+      fontWeight: '700',
+
+      color:
+        theme.textSecondary,
+
+      marginTop: 4,
+
+      textAlign: 'center',
+    },
+
+    selectedEventTypeText: {
+      color: '#FFFFFF',
+    },
+
+
+    /* =================================================
+       DATE
+    ================================================= */
+
+    dateButton: {
+      height: 51,
+
+      borderRadius: 14,
+
+      backgroundColor:
+        theme.inputBackground,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.inputBorder,
+
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      paddingHorizontal: 13,
+    },
+
+    dateButtonText: {
+      flex: 1,
+
+      fontSize: 13.5,
+
+      color: theme.text,
+
+      fontWeight: '600',
+
+      marginLeft: 9,
+    },
+
+
+    /* =================================================
+       ACTIVITY DATE CALENDAR
+    ================================================= */
+
+    activityDateCalendar: {
+      marginTop: 8,
+
+      backgroundColor:
+        theme.card,
+
+      borderRadius: 16,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+
+      padding: 12,
+    },
+
+    activityDateCalendarHeader: {
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      justifyContent:
+        'space-between',
+
       marginBottom: 10,
     },
 
-    iconPickerSubtitle: {
-      fontSize: 11,
-      color:
-        theme.textMuted,
-      marginTop: -4,
-    },
+    activityDateCalendarArrow: {
+      width: 34,
 
-    selectedIconPreview: {
-      width: 42,
-      height: 42,
-      borderRadius: 12,
+      height: 34,
+
+      borderRadius: 10,
+
       backgroundColor:
         theme.primaryLight,
-      borderWidth: 1.5,
-      borderColor:
-        theme.primary,
+
       alignItems: 'center',
+
       justifyContent: 'center',
     },
 
+    activityDateCalendarMonth: {
+      fontSize: 14,
+
+      fontWeight: '800',
+
+      color: theme.text,
+    },
+
+    activityDateWeekdayRow: {
+      flexDirection: 'row',
+
+      marginBottom: 3,
+    },
+
+    activityDateWeekdayText: {
+      width: '14.2857%',
+
+      textAlign: 'center',
+
+      fontSize: 10,
+
+      fontWeight: '700',
+
+      color:
+        theme.textMuted,
+    },
+
+    activityDateGrid: {
+      flexDirection: 'row',
+
+      flexWrap: 'wrap',
+    },
+
+    activityDateDay: {
+      width: '14.2857%',
+
+      height: 38,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+
+      position: 'relative',
+
+      borderRadius: 10,
+    },
+
+    activityDateDayText: {
+      fontSize: 12.5,
+
+      color: theme.text,
+
+      fontWeight: '600',
+    },
+
+    activityDateSelectedDay: {
+      backgroundColor:
+        theme.primary,
+    },
+
+    activityDateSelectedDayText: {
+      color: '#FFFFFF',
+
+      fontWeight: '800',
+    },
+
+    activityDateTodayDay: {
+      backgroundColor:
+        theme.primaryLight,
+    },
+
+    activityDateTodayDayText: {
+      color: theme.primary,
+
+      fontWeight: '800',
+    },
+
+    activityDateEventDot: {
+      position: 'absolute',
+
+      bottom: 3,
+
+      width: 4,
+
+      height: 4,
+
+      borderRadius: 2,
+
+      backgroundColor:
+        theme.primary,
+    },
+
+
+    /* =================================================
+       TIME PICKER
+    ================================================= */
+
+    timePickerContainer: {
+      marginTop: 2,
+    },
+
+    timePickerBox: {
+      height: 116,
+
+      backgroundColor:
+        theme.card,
+
+      borderRadius: 16,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+
+      flexDirection: 'row',
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+    },
+
+    timeColumn: {
+      width: 55,
+
+      height: 106,
+
+      alignItems: 'center',
+
+      justifyContent: 'space-between',
+
+      paddingVertical: 3,
+    },
+
+    timeArrowButton: {
+      width: 45,
+
+      height: 31,
+
+      borderRadius: 9,
+
+      backgroundColor:
+        theme.primaryLight,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+    },
+
+    timeValue: {
+      fontSize: 20,
+
+      fontWeight: '800',
+
+      color: theme.text,
+    },
+
+    timeColon: {
+      fontSize: 21,
+
+      fontWeight: '800',
+
+      color: theme.text,
+
+      marginHorizontal: 3,
+
+      marginTop: 1,
+    },
+
+    periodColumn: {
+      marginLeft: 14,
+
+      gap: 7,
+    },
+
+    periodButton: {
+      width: 59,
+
+      height: 41,
+
+      borderRadius: 10,
+
+      backgroundColor:
+        theme.cardSecondary,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+    },
+
+    selectedPeriodButton: {
+      backgroundColor:
+        theme.primary,
+
+      borderColor:
+        theme.primary,
+    },
+
+    periodButtonText: {
+      fontSize: 12,
+
+      fontWeight: '800',
+
+      color:
+        theme.textSecondary,
+    },
+
+    selectedPeriodButtonText: {
+      color: '#FFFFFF',
+    },
+
+
+    /* =================================================
+       ICON PICKER
+    ================================================= */
+
     iconGrid: {
       flexDirection: 'row',
+
       flexWrap: 'wrap',
-      gap: 9,
-      marginBottom: 17,
+
+      gap: 8,
     },
 
     iconButton: {
-      width: 47,
-      height: 47,
-      borderRadius: 13,
+      width: 48,
+
+      height: 48,
+
+      borderRadius: 12,
+
       backgroundColor:
-        theme.cardSecondary,
+        theme.card,
+
       borderWidth: 1,
+
       borderColor:
         theme.border,
+
       alignItems: 'center',
+
       justifyContent: 'center',
     },
 
     selectedIconButton: {
       backgroundColor:
         theme.primaryLight,
+
       borderWidth: 2,
+
       borderColor:
         theme.primary,
     },
 
 
-    // ==================================================
-    // MODAL BUTTONS
-    // ==================================================
+    /* =================================================
+       REMINDER FORM
+    ================================================= */
+
+    reminderFormCard: {
+      marginTop: 18,
+
+      padding: 13,
+
+      borderRadius: 14,
+
+      backgroundColor:
+        theme.primaryLight,
+
+      flexDirection: 'row',
+
+      alignItems: 'flex-start',
+    },
+
+    reminderFormText: {
+      flex: 1,
+
+      marginLeft: 10,
+    },
+
+    reminderFormTitle: {
+      fontSize: 13,
+
+      fontWeight: '800',
+
+      color: theme.text,
+    },
+
+    reminderFormDescription: {
+      fontSize: 11,
+
+      lineHeight: 16,
+
+      color:
+        theme.textSecondary,
+
+      marginTop: 3,
+    },
+
+
+    /* =================================================
+       MODAL BUTTONS
+    ================================================= */
 
     modalButtons: {
       flexDirection: 'row',
-      alignItems: 'center',
-      marginTop: 3,
+
+      marginTop: 20,
+
       gap: 10,
     },
 
     cancelButton: {
       height: 52,
-      flex: 0.8,
+
+      flex: 0.85,
+
       borderRadius: 14,
-      borderWidth: 1,
-      borderColor:
-        theme.inputBorder,
+
       backgroundColor:
-        theme.cardSecondary,
+        theme.card,
+
+      borderWidth: 1,
+
+      borderColor:
+        theme.border,
+
       alignItems: 'center',
+
       justifyContent: 'center',
     },
 
     cancelButtonText: {
+      fontSize: 13,
+
+      fontWeight: '700',
+
       color:
         theme.textSecondary,
-      fontSize: 14,
-      fontWeight: '700',
     },
 
     saveButton: {
       height: 52,
+
       flex: 1.5,
+
       borderRadius: 14,
+
       backgroundColor:
         theme.primary,
+
       flexDirection: 'row',
+
       alignItems: 'center',
+
       justifyContent: 'center',
+
+      gap: 6,
     },
 
     saveButtonText: {
       color: '#FFFFFF',
-      fontSize: 14,
+
+      fontSize: 13,
+
+      fontWeight: '800',
+    },
+
+
+    /* =================================================
+       BOTTOM NAVIGATION
+    ================================================= */
+
+    bottomNavigation: {
+      position: 'absolute',
+
+      left: 0,
+
+      right: 0,
+
+      bottom: 0,
+
+      height: 70,
+
+      backgroundColor:
+        theme.tabBar,
+
+      borderTopWidth: 1,
+
+      borderTopColor:
+        theme.border,
+
+      flexDirection: 'row',
+
+      justifyContent:
+        'space-around',
+
+      alignItems: 'center',
+    },
+
+    bottomItem: {
+      width: 75,
+
+      height: 60,
+
+      alignItems: 'center',
+
+      justifyContent: 'center',
+    },
+
+    bottomLabel: {
+      fontSize: 10.5,
+
+      color:
+        theme.tabInactive,
+
+      marginTop: 3,
+    },
+
+    activeBottomLabel: {
+      color:
+        theme.primary,
+
       fontWeight: '700',
-      marginLeft: 6,
+    },
+
+    bottomSpace: {
+      height: 25,
     },
 
   });

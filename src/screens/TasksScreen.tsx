@@ -6,7 +6,7 @@ import {
   TextInput,
   Pressable,
   StatusBar,
-  Alert,
+  Modal,
 } from 'react-native';
 
 import { useMemo, useState } from 'react';
@@ -16,10 +16,14 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { Task } from '../types/task';
 import { useApp } from '../context/AppContext';
 import type { AppTheme } from '../theme/theme';
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
 type TasksScreenProps = {
   tasks: Task[];
   onToggleTask: (taskId: number) => void;
+  onDeleteTask: (taskId: number) => void;
+  onAddTask: () => void;
   onGoHome: () => void;
   onGoSchedule: () => void;
   onGoMore: () => void;
@@ -28,6 +32,8 @@ type TasksScreenProps = {
 export default function TasksScreen({
   tasks,
   onToggleTask,
+  onDeleteTask,
+  onAddTask,
   onGoHome,
   onGoSchedule,
   onGoMore,
@@ -40,6 +46,12 @@ export default function TasksScreen({
 
   const styles = createStyles(theme);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
+
   // ==================================================
   // STATE
   // ==================================================
@@ -48,14 +60,39 @@ export default function TasksScreen({
     'All' | 'Pending' | 'Completed'
   >('All');
 
-  const [searchText, setSearchText] = useState('');
+  const [searchText, setSearchText] =
+    useState('');
+
+  const [taskToDelete, setTaskToDelete] =
+    useState<Task | null>(null);
 
   // ==================================================
-  // FILTER TASKS
+  // PRIORITY ORDER
+  //
+  // High   = 1
+  // Medium = 2
+  // Low    = 3
+  // ==================================================
+
+  const priorityOrder: Record<
+    Task['priority'],
+    number
+  > = {
+    High: 1,
+    Medium: 2,
+    Low: 3,
+  };
+
+  // ==================================================
+  // FILTER + SORT TASKS
   // ==================================================
 
   const filteredTasks = useMemo(() => {
-    let result = tasks;
+    let result = [...tasks];
+
+    // ==================================================
+    // FILTER BY TAB
+    // ==================================================
 
     if (selectedTab === 'Pending') {
       result = result.filter(
@@ -69,6 +106,10 @@ export default function TasksScreen({
       );
     }
 
+    // ==================================================
+    // SEARCH
+    // ==================================================
+
     if (searchText.trim()) {
       const search = searchText
         .trim()
@@ -81,33 +122,57 @@ export default function TasksScreen({
       );
     }
 
+    // ==================================================
+    // SORT BY PRIORITY
+    //
+    // High → Medium → Low
+    // ==================================================
+
+    result.sort(
+      (a, b) =>
+        priorityOrder[a.priority] -
+        priorityOrder[b.priority]
+    );
+
     return result;
-  }, [tasks, selectedTab, searchText]);
+  }, [
+    tasks,
+    selectedTab,
+    searchText,
+  ]);
 
   // ==================================================
   // TASK MENU
   // ==================================================
 
-  const handleTaskMenu = (task: Task) => {
-    Alert.alert(
-      task.title,
-      'Choose an action.',
-      [
-        {
-          text: task.completed
-            ? 'Mark as Pending'
-            : 'Mark as Completed',
+  const handleTaskMenu = (
+    task: Task
+  ) => {
+    showFlashcard({
+      title: task.title,
+      message: 'Choose an action for this task.',
+      tone: 'info',
+      primaryLabel: task.completed
+        ? 'Mark as Pending'
+        : 'Mark as Completed',
+      secondaryLabel: 'Cancel',
+      onPrimary: () => onToggleTask(task.id),
+    });
+  };
 
-          onPress: () =>
-            onToggleTask(task.id),
-        },
+  const handleDeleteTask = (
+    task: Task
+  ) => {
+    setTaskToDelete(task);
+  };
 
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-      ]
-    );
+  const confirmDeleteTask = () => {
+    if (!taskToDelete) {
+      return;
+    }
+
+    onDeleteTask(taskToDelete.id);
+    setTaskToDelete(null);
   };
 
   // ==================================================
@@ -151,17 +216,20 @@ export default function TasksScreen({
           value={searchText}
           onChangeText={setSearchText}
           placeholder="Search tasks..."
-          placeholderTextColor={theme.textMuted}
+          placeholderTextColor={
+            theme.textMuted
+          }
           returnKeyType="search"
         />
 
         <Pressable
           style={styles.filterButton}
           onPress={() => {
-            Alert.alert(
-              'Filter Tasks',
-              'Use the All, Pending, or Completed tabs to filter your tasks.'
-            );
+            showFlashcard({
+              title: 'Filter Tasks',
+              message: 'Use the All, Pending, or Completed tabs to filter your tasks.',
+              tone: 'info',
+            });
           }}
         >
           <Ionicons
@@ -179,7 +247,9 @@ export default function TasksScreen({
       <View style={styles.tabsContainer}>
         <TabButton
           title="All"
-          selected={selectedTab === 'All'}
+          selected={
+            selectedTab === 'All'
+          }
           onPress={() =>
             setSelectedTab('All')
           }
@@ -211,6 +281,11 @@ export default function TasksScreen({
 
       {/* ==================================================
           TASK LIST
+          
+          SORT ORDER:
+          HIGH
+          MEDIUM
+          LOW
           ================================================== */}
 
       <FlatList
@@ -221,19 +296,25 @@ export default function TasksScreen({
         contentContainerStyle={styles.list}
         showsVerticalScrollIndicator={false}
         ListEmptyComponent={
-          <View style={styles.emptyContainer}>
+          <View
+            style={styles.emptyContainer}
+          >
             <Ionicons
               name="checkmark-circle-outline"
               size={50}
               color={theme.primary}
             />
 
-            <Text style={styles.emptyTitle}>
+            <Text
+              style={styles.emptyTitle}
+            >
               No tasks found
             </Text>
 
             <Text
-              style={styles.emptyDescription}
+              style={
+                styles.emptyDescription
+              }
             >
               {searchText
                 ? 'Try a different search.'
@@ -250,6 +331,9 @@ export default function TasksScreen({
             onToggle={() =>
               onToggleTask(item.id)
             }
+            onDelete={() =>
+              handleDeleteTask(item)
+            }
             onMenu={() =>
               handleTaskMenu(item)
             }
@@ -257,6 +341,93 @@ export default function TasksScreen({
           />
         )}
       />
+
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
+
+      {/* ==================================================
+          DELETE CONFIRMATION FLASHCARD
+          ================================================== */}
+
+      <Modal
+        visible={taskToDelete !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setTaskToDelete(null)}
+      >
+        <View style={styles.deleteModalOverlay}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setTaskToDelete(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Cancel delete"
+          />
+
+          <View style={styles.deleteCard}>
+            <View style={styles.deleteIconCircle}>
+              <Ionicons
+                name="trash-outline"
+                size={25}
+                color={theme.danger}
+              />
+            </View>
+
+            <Text style={styles.deleteTitle}>
+              Delete this task?
+            </Text>
+
+            <Text style={styles.deleteMessage}>
+              {taskToDelete
+                ? `"${taskToDelete.title}" will be permanently removed from your task list.`
+                : ''}
+            </Text>
+
+            <View style={styles.deleteActions}>
+              <Pressable
+                style={styles.deleteCancelButton}
+                onPress={() => setTaskToDelete(null)}
+              >
+                <Text style={styles.deleteCancelText}>
+                  Cancel
+                </Text>
+              </Pressable>
+
+              <Pressable
+                style={styles.deleteConfirmButton}
+                onPress={confirmDeleteTask}
+              >
+                <Ionicons
+                  name="trash-outline"
+                  size={17}
+                  color="#FFFFFF"
+                />
+                <Text style={styles.deleteConfirmText}>
+                  Delete
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* =====================================================
+          FLOATING ADD TASK BUTTON
+      ===================================================== */}
+
+      <Pressable
+        style={styles.floatingButton}
+        onPress={onAddTask}
+        accessibilityRole="button"
+        accessibilityLabel="Add task"
+      >
+        <Ionicons
+          name="add"
+          size={32}
+          color="#FFFFFF"
+        />
+      </Pressable>
 
       {/* ==================================================
           BOTTOM NAVIGATION
@@ -277,7 +448,9 @@ export default function TasksScreen({
             color={theme.tabInactive}
           />
 
-          <Text style={styles.bottomLabel}>
+          <Text
+            style={styles.bottomLabel}
+          >
             Home
           </Text>
         </Pressable>
@@ -315,7 +488,9 @@ export default function TasksScreen({
             color={theme.tabInactive}
           />
 
-          <Text style={styles.bottomLabel}>
+          <Text
+            style={styles.bottomLabel}
+          >
             Schedule
           </Text>
         </Pressable>
@@ -332,7 +507,9 @@ export default function TasksScreen({
             color={theme.tabInactive}
           />
 
-          <Text style={styles.bottomLabel}>
+          <Text
+            style={styles.bottomLabel}
+          >
             More
           </Text>
         </Pressable>
@@ -389,6 +566,7 @@ function TabButton({
 type TaskCardProps = {
   task: Task;
   onToggle: () => void;
+  onDelete: () => void;
   onMenu: () => void;
   theme: AppTheme;
 };
@@ -396,6 +574,7 @@ type TaskCardProps = {
 function TaskCard({
   task,
   onToggle,
+  onDelete,
   onMenu,
   theme,
 }: TaskCardProps) {
@@ -403,7 +582,9 @@ function TaskCard({
 
   return (
     <View style={styles.taskCard}>
-      {/* CHECK CIRCLE */}
+      {/* ==================================================
+          CHECK CIRCLE
+          ================================================== */}
 
       <Pressable
         style={[
@@ -422,7 +603,9 @@ function TaskCard({
         )}
       </Pressable>
 
-      {/* TASK INFORMATION */}
+      {/* ==================================================
+          TASK INFORMATION
+          ================================================== */}
 
       <View style={styles.taskInfo}>
         <Text
@@ -443,15 +626,20 @@ function TaskCard({
         </Text>
       </View>
 
-      {/* PRIORITY */}
+      {/* ==================================================
+          PRIORITY
+          ================================================== */}
 
       <View
         style={[
           styles.priorityBadge,
+
           task.priority === 'High' &&
             styles.highPriority,
+
           task.priority === 'Medium' &&
             styles.mediumPriority,
+
           task.priority === 'Low' &&
             styles.lowPriority,
         ]}
@@ -459,10 +647,13 @@ function TaskCard({
         <Text
           style={[
             styles.priorityText,
+
             task.priority === 'High' &&
               styles.highPriorityText,
+
             task.priority === 'Medium' &&
               styles.mediumPriorityText,
+
             task.priority === 'Low' &&
               styles.lowPriorityText,
           ]}
@@ -471,7 +662,27 @@ function TaskCard({
         </Text>
       </View>
 
-      {/* MENU */}
+      {/* ==================================================
+          DELETE
+          ================================================== */}
+
+      <Pressable
+        style={styles.deleteButton}
+        onPress={onDelete}
+        hitSlop={6}
+        accessibilityRole="button"
+        accessibilityLabel={`Delete ${task.title}`}
+      >
+        <Ionicons
+          name="trash-outline"
+          size={20}
+          color={theme.danger}
+        />
+      </Pressable>
+
+      {/* ==================================================
+          MENU
+          ================================================== */}
 
       <Pressable
         style={styles.menuButton}
@@ -491,7 +702,9 @@ function TaskCard({
 // STYLES
 // ======================================================
 
-const createStyles = (theme: AppTheme) =>
+const createStyles = (
+  theme: AppTheme
+) =>
   StyleSheet.create({
     // ==================================================
     // CONTAINER
@@ -684,7 +897,8 @@ const createStyles = (theme: AppTheme) =>
       fontWeight: '700',
     },
 
-    // High
+    // HIGH
+
     highPriority: {
       backgroundColor:
         theme.danger + '22',
@@ -694,7 +908,8 @@ const createStyles = (theme: AppTheme) =>
       color: theme.danger,
     },
 
-    // Medium
+    // MEDIUM
+
     mediumPriority: {
       backgroundColor:
         theme.warning + '22',
@@ -704,7 +919,8 @@ const createStyles = (theme: AppTheme) =>
       color: theme.warning,
     },
 
-    // Low
+    // LOW
+
     lowPriority: {
       backgroundColor:
         theme.success + '22',
@@ -723,6 +939,132 @@ const createStyles = (theme: AppTheme) =>
       height: 36,
       alignItems: 'center',
       justifyContent: 'center',
+    },
+
+    deleteButton: {
+      width: 32,
+      height: 36,
+      alignItems: 'center',
+      justifyContent: 'center',
+      marginRight: 2,
+    },
+
+    // ==================================================
+    // DELETE CONFIRMATION
+    // ==================================================
+
+    deleteModalOverlay: {
+      flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
+      paddingHorizontal: 24,
+      backgroundColor: 'rgba(20, 43, 85, 0.42)',
+    },
+
+    deleteCard: {
+      width: '100%',
+      maxWidth: 360,
+      alignItems: 'center',
+      paddingHorizontal: 22,
+      paddingTop: 26,
+      paddingBottom: 20,
+      borderRadius: 22,
+      backgroundColor: theme.card,
+      borderWidth: 1,
+      borderColor: theme.border,
+      elevation: 8,
+      shadowColor: theme.shadow,
+      shadowOpacity: 0.18,
+      shadowRadius: 16,
+      shadowOffset: {
+        width: 0,
+        height: 8,
+      },
+    },
+
+    deleteIconCircle: {
+      width: 58,
+      height: 58,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 29,
+      backgroundColor: theme.logoutBackground,
+      borderWidth: 1,
+      borderColor: theme.logoutBorder,
+    },
+
+    deleteTitle: {
+      marginTop: 17,
+      fontSize: 20,
+      fontWeight: '800',
+      color: theme.text,
+      textAlign: 'center',
+    },
+
+    deleteMessage: {
+      marginTop: 8,
+      fontSize: 13,
+      lineHeight: 19,
+      color: theme.textSecondary,
+      textAlign: 'center',
+    },
+
+    deleteActions: {
+      width: '100%',
+      flexDirection: 'row',
+      gap: 10,
+      marginTop: 22,
+    },
+
+    deleteCancelButton: {
+      flex: 1,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.border,
+      backgroundColor: theme.cardSecondary,
+    },
+
+    deleteCancelText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: theme.textSecondary,
+    },
+
+    deleteConfirmButton: {
+      flex: 1,
+      height: 46,
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: 6,
+      borderRadius: 12,
+      backgroundColor: theme.danger,
+    },
+
+    deleteConfirmText: {
+      fontSize: 13,
+      fontWeight: '700',
+      color: '#FFFFFF',
+    },
+
+    // ==================================================
+    // FLOATING ADD BUTTON
+    // ==================================================
+
+    floatingButton: {
+      position: 'absolute',
+      right: 20,
+      bottom: 82,
+      width: 58,
+      height: 58,
+      borderRadius: 29,
+      backgroundColor: theme.primary,
+      alignItems: 'center',
+      justifyContent: 'center',
+      elevation: 5,
     },
 
     // ==================================================

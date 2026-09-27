@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
 import {
-  Alert,
   Image,
   Modal,
   Pressable,
@@ -14,6 +13,9 @@ import {
 
 import Ionicons from '@expo/vector-icons/Ionicons';
 import * as ImagePicker from 'expo-image-picker';
+
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
 type ProfileScreenProps = {
   name: string;
@@ -61,6 +63,12 @@ export default function ProfileScreen({
   const [showPhotoOptions, setShowPhotoOptions] =
     useState(false);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
+
   const startEditing = () => {
     setEditStudentId(profile.studentId);
     setEditEmail(profile.email);
@@ -81,34 +89,38 @@ export default function ProfileScreen({
 
   const saveProfile = () => {
     if (!editStudentId.trim()) {
-      Alert.alert(
-        'Student ID Required',
-        'Please enter your student ID.'
-      );
+      showFlashcard({
+        title: 'Student ID Required',
+        message: 'Please enter your student ID.',
+        tone: 'warning',
+      });
       return;
     }
 
     if (!editEmail.trim()) {
-      Alert.alert(
-        'Email Required',
-        'Please enter your email address.'
-      );
+      showFlashcard({
+        title: 'Email Required',
+        message: 'Please enter your email address.',
+        tone: 'warning',
+      });
       return;
     }
 
     if (!editCourse.trim()) {
-      Alert.alert(
-        'Course Required',
-        'Please enter your course.'
-      );
+      showFlashcard({
+        title: 'Course Required',
+        message: 'Please enter your course.',
+        tone: 'warning',
+      });
       return;
     }
 
     if (!editYearLevel.trim()) {
-      Alert.alert(
-        'Year Level Required',
-        'Please enter your year level.'
-      );
+      showFlashcard({
+        title: 'Year Level Required',
+        message: 'Please enter your year level.',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -122,10 +134,11 @@ export default function ProfileScreen({
 
     setIsEditing(false);
 
-    Alert.alert(
-      'Profile Updated',
-      'Your profile information has been updated.'
-    );
+    showFlashcard({
+      title: 'Profile Updated',
+      message: 'Your profile information has been updated.',
+      tone: 'success',
+    });
   };
 
   const choosePhoto = async () => {
@@ -135,10 +148,11 @@ export default function ProfileScreen({
       await ImagePicker.requestMediaLibraryPermissionsAsync();
 
     if (!permission.granted) {
-      Alert.alert(
-        'Permission Required',
-        'Please allow Schedly to access your photos so you can select a profile picture.'
-      );
+      showFlashcard({
+        title: 'Photo Access Needed',
+        message: 'Please allow Schedly to access your photos so you can select a profile picture.',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -167,26 +181,19 @@ export default function ProfileScreen({
   const removePhoto = () => {
     setShowPhotoOptions(false);
 
-    Alert.alert(
-      'Remove Profile Photo',
-      'Are you sure you want to remove your profile photo?',
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-        {
-          text: 'Remove',
-          style: 'destructive',
-          onPress: () => {
+    showFlashcard({
+      title: 'Remove Profile Photo?',
+      message: 'Your current profile photo will be removed from this device.',
+      tone: 'danger',
+      primaryLabel: 'Remove',
+      secondaryLabel: 'Cancel',
+      onPrimary: () => {
             setProfile((current) => ({
               ...current,
               photo: null,
             }));
-          },
-        },
-      ]
-    );
+      },
+    });
   };
 
   return (
@@ -503,6 +510,11 @@ export default function ProfileScreen({
 
         <View style={styles.bottomSpace} />
       </ScrollView>
+
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
 
       {/* Photo Options Modal */}
       <Modal

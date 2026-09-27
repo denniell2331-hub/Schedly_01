@@ -1,12 +1,21 @@
 import React, {
   createContext,
   useContext,
+  useEffect,
   useState,
   ReactNode,
 } from 'react';
 
 import type { Task } from '../types/task';
+
 import { initialTasks } from '../data/initialData';
+
+import {
+  seedInitialTasks,
+  insertTask,
+  updateTaskCompletion,
+  deleteTaskFromDatabase,
+} from '../database/taskDatabase';
 
 import {
   lightTheme,
@@ -35,11 +44,22 @@ interface AppContextType {
     description: string,
     priority: Task['priority'],
     deadline: string
-  ) => void;
+  ) => Promise<void>;
 
-  completeTask: (id: number) => void;
+  completeTask: (
+    id: number
+  ) => Promise<void>;
 
-  deleteTask: (id: number) => void;
+  deleteTask: (
+    id: number
+  ) => Promise<void>;
+
+
+  // ====================================================
+  // DATABASE
+  // ====================================================
+
+  databaseReady: boolean;
 
 
   // ====================================================
@@ -50,9 +70,13 @@ interface AppContextType {
 
   theme: AppTheme;
 
-  setDarkMode: (enabled: boolean) => void;
+  setDarkMode: (
+    enabled: boolean
+  ) => void;
 
-  toggleDarkMode: (enabled: boolean) => void;
+  toggleDarkMode: (
+    enabled: boolean
+  ) => void;
 }
 
 
@@ -61,7 +85,9 @@ interface AppContextType {
 // ======================================================
 
 const AppContext =
-  createContext<AppContextType | undefined>(undefined);
+  createContext<AppContextType | undefined>(
+    undefined
+  );
 
 
 // ======================================================
@@ -86,7 +112,15 @@ export function AppProvider({
   // ====================================================
 
   const [tasks, setTasks] =
-    useState<Task[]>(initialTasks);
+    useState<Task[]>([]);
+
+
+  // ====================================================
+  // DATABASE STATE
+  // ====================================================
+
+  const [databaseReady, setDatabaseReady] =
+    useState(false);
 
 
   // ====================================================
@@ -107,10 +141,57 @@ export function AppProvider({
 
 
   // ====================================================
+  // LOAD TASKS FROM SQLITE
+  // ====================================================
+
+  useEffect(() => {
+
+    async function loadTasks() {
+
+      try {
+
+        /*
+         * seedInitialTasks() checks whether
+         * the initial sample data has already
+         * been inserted.
+         *
+         * First launch:
+         *   initialTasks → SQLite
+         *
+         * Later launches:
+         *   SQLite → tasks
+         */
+
+        const savedTasks =
+          await seedInitialTasks(
+            initialTasks
+          );
+
+        setTasks(savedTasks);
+
+        setDatabaseReady(true);
+
+      } catch (error) {
+
+        console.error(
+          'Failed to load tasks from SQLite:',
+          error
+        );
+
+      }
+
+    }
+
+    loadTasks();
+
+  }, []);
+
+
+  // ====================================================
   // ADD TASK
   // ====================================================
 
-  const addTask = (
+  const addTask = async (
     title: string,
     description: string,
     priority: Task['priority'],
@@ -118,18 +199,38 @@ export function AppProvider({
   ) => {
 
     const newTask: Task = {
+
       id: Date.now(),
+
       title,
+
       description,
+
       priority,
+
       deadline,
+
       completed: false,
+
     };
 
+
+    // ==================================================
+    // SAVE TO SQLITE
+    // ==================================================
+
+    await insertTask(newTask);
+
+
+    // ==================================================
+    // UPDATE UI
+    // ==================================================
+
     setTasks((currentTasks) => [
-      ...currentTasks,
       newTask,
+      ...currentTasks,
     ]);
+
   };
 
 
@@ -137,18 +238,51 @@ export function AppProvider({
   // COMPLETE TASK
   // ====================================================
 
-  const completeTask = (id: number) => {
+  const completeTask = async (
+    id: number
+  ) => {
+
+    const task = tasks.find(
+      (currentTask) =>
+        currentTask.id === id
+    );
+
+
+    if (!task) {
+      return;
+    }
+
+
+    const newCompletedState =
+      !task.completed;
+
+
+    // ==================================================
+    // SAVE CHANGE TO SQLITE
+    // ==================================================
+
+    await updateTaskCompletion(
+      id,
+      newCompletedState
+    );
+
+
+    // ==================================================
+    // UPDATE UI
+    // ==================================================
 
     setTasks((currentTasks) =>
-      currentTasks.map((task) =>
-        task.id === id
+      currentTasks.map((currentTask) =>
+        currentTask.id === id
           ? {
-              ...task,
-              completed: !task.completed,
+              ...currentTask,
+              completed:
+                newCompletedState,
             }
-          : task
+          : currentTask
       )
     );
+
   };
 
 
@@ -156,13 +290,28 @@ export function AppProvider({
   // DELETE TASK
   // ====================================================
 
-  const deleteTask = (id: number) => {
+  const deleteTask = async (
+    id: number
+  ) => {
+
+    // ==================================================
+    // DELETE FROM SQLITE
+    // ==================================================
+
+    await deleteTaskFromDatabase(id);
+
+
+    // ==================================================
+    // UPDATE UI
+    // ==================================================
 
     setTasks((currentTasks) =>
       currentTasks.filter(
-        (task) => task.id !== id
+        (task) =>
+          task.id !== id
       )
     );
+
   };
 
 
@@ -170,8 +319,12 @@ export function AppProvider({
   // DARK MODE
   // ====================================================
 
-  const setDarkMode = (enabled: boolean) => {
+  const setDarkMode = (
+    enabled: boolean
+  ) => {
+
     setIsDarkMode(enabled);
+
   };
 
 
@@ -179,8 +332,12 @@ export function AppProvider({
   // TOGGLE DARK MODE
   // ====================================================
 
-  const toggleDarkMode = (enabled: boolean) => {
+  const toggleDarkMode = (
+    enabled: boolean
+  ) => {
+
     setIsDarkMode(enabled);
+
   };
 
 
@@ -191,11 +348,15 @@ export function AppProvider({
   return (
     <AppContext.Provider
       value={{
+
         // Tasks
         tasks,
         addTask,
         completeTask,
         deleteTask,
+
+        // Database
+        databaseReady,
 
         // Theme
         isDarkMode,
@@ -204,9 +365,12 @@ export function AppProvider({
         // Dark mode controls
         setDarkMode,
         toggleDarkMode,
+
       }}
     >
+
       {children}
+
     </AppContext.Provider>
   );
 }
@@ -218,13 +382,18 @@ export function AppProvider({
 
 export function useApp() {
 
-  const context = useContext(AppContext);
+  const context =
+    useContext(AppContext);
+
 
   if (!context) {
+
     throw new Error(
       'useApp must be used inside an AppProvider'
     );
+
   }
+
 
   return context;
 }

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
 import {
-  Alert,
   Image,
   KeyboardAvoidingView,
   Platform,
@@ -14,6 +13,9 @@ import {
 } from 'react-native';
 
 import Ionicons from '@expo/vector-icons/Ionicons';
+
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
 type LoginScreenProps = {
   onLogin: () => void;
@@ -35,22 +37,30 @@ export default function LoginScreen({
   const [isLoggingIn, setIsLoggingIn] =
     useState(false);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
+
   const handleLogin = () => {
     const trimmedEmail = email.trim();
 
     if (!trimmedEmail) {
-      Alert.alert(
-        'Email Required',
-        'Please enter your email address.'
-      );
+      showFlashcard({
+        title: 'Email Required',
+        message: 'Please enter your email address.',
+        tone: 'warning',
+      });
       return;
     }
 
     if (!password) {
-      Alert.alert(
-        'Password Required',
-        'Please enter your password.'
-      );
+      showFlashcard({
+        title: 'Password Required',
+        message: 'Please enter your password.',
+        tone: 'warning',
+      });
       return;
     }
 
@@ -68,10 +78,11 @@ export default function LoginScreen({
       return;
     }
 
-    Alert.alert(
-      'Forgot Password',
-      'Password recovery will be available when the authentication system is connected.'
-    );
+    showFlashcard({
+      title: 'Forgot Password',
+      message: 'Password recovery will be available when the authentication system is connected.',
+      tone: 'info',
+    });
   };
 
   const handleSignUp = () => {
@@ -80,10 +91,11 @@ export default function LoginScreen({
       return;
     }
 
-    Alert.alert(
-      'Create Account',
-      'Account registration will be available soon.'
-    );
+    showFlashcard({
+      title: 'Create Account',
+      message: 'Account registration will be available soon.',
+      tone: 'info',
+    });
   };
 
   return (
@@ -321,6 +333,11 @@ export default function LoginScreen({
         <View style={styles.bottomSpace} />
 
       </ScrollView>
+
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
     </KeyboardAvoidingView>
   );
 }

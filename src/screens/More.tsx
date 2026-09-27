@@ -1,7 +1,6 @@
 import React from 'react';
 
 import {
-  Alert,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -16,6 +15,8 @@ import { useApp } from '../context/AppContext';
 import type {
   AppTheme,
 } from '../theme/theme';
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
 
 // ======================================================
@@ -53,6 +54,12 @@ export default function MoreScreen({
 
   const styles = createStyles(theme);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
+
 
   // ====================================================
   // LOGOUT CONFIRMATION
@@ -60,24 +67,14 @@ export default function MoreScreen({
 
   const handleLogout = () => {
 
-    Alert.alert(
-      'See you later!',
-
-      'Your Schedly journey isn’t going anywhere. Your tasks and schedule will be waiting for you when you return.',
-
-      [
-        {
-          text: 'Cancel',
-          style: 'cancel',
-        },
-
-        {
-          text: 'Log Out',
-          style: 'destructive',
-          onPress: onLogout,
-        },
-      ]
-    );
+    showFlashcard({
+      title: 'Log Out?',
+      message: 'Your tasks and schedule will be waiting for you when you return.',
+      tone: 'danger',
+      primaryLabel: 'Log Out',
+      secondaryLabel: 'Cancel',
+      onPrimary: onLogout,
+    });
   };
 
 
@@ -87,18 +84,12 @@ export default function MoreScreen({
 
   const handleHelpSupport = () => {
 
-    Alert.alert(
-      'Help & Support',
-
-      'Need a little help with Schedly?\n\nYou can use this section for assistance with your tasks, schedule, profile, and app settings.\n\nMore support features will be available in a future update.',
-
-      [
-        {
-          text: 'Got It',
-          style: 'default',
-        },
-      ]
-    );
+    showFlashcard({
+      title: 'Help & Support',
+      message: 'Use this section for assistance with your tasks, schedule, profile, and app settings. More support features will be available in a future update.',
+      tone: 'info',
+      primaryLabel: 'Got It',
+    });
   };
 
 
@@ -108,18 +99,12 @@ export default function MoreScreen({
 
   const handleAbout = () => {
 
-    Alert.alert(
-      'About Schedly',
-
-      'Schedly\n\nA student productivity application designed to help you manage your tasks, schedules, and academic activities in one place.\n\nVersion 1.0.0',
-
-      [
-        {
-          text: 'Close',
-          style: 'default',
-        },
-      ]
-    );
+    showFlashcard({
+      title: 'About Schedly',
+      message: 'Schedly is a student productivity application for managing tasks, schedules, and academic activities in one place. Version 1.0.0.',
+      tone: 'info',
+      primaryLabel: 'Close',
+    });
   };
 
 
@@ -467,6 +452,11 @@ export default function MoreScreen({
         <View style={styles.bottomSpace} />
 
       </ScrollView>
+
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
 
 
       {/* ==================================================

@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 
 import {
-  Alert,
   Modal,
   Pressable,
   ScrollView,
@@ -15,6 +14,8 @@ import {
 import Ionicons from '@expo/vector-icons/Ionicons';
 
 import { useApp } from '../context/AppContext';
+import FlashcardModal from '../components/FlashcardModal';
+import { useFlashcard } from '../hooks/useFlashcard';
 
 type SettingsScreenProps = {
   onGoBack: () => void;
@@ -72,6 +73,12 @@ export default function SettingsScreen({
   const [showLanguageModal, setShowLanguageModal] =
     useState(false);
 
+  const {
+    flashcard,
+    showFlashcard,
+    closeFlashcard,
+  } = useFlashcard();
+
 
   // ==================================================
   // OPEN NAME EDITOR
@@ -121,10 +128,11 @@ export default function SettingsScreen({
   const saveModal = () => {
 
     if (!inputValue.trim()) {
-      Alert.alert(
-        'Required',
-        'Please enter a value before saving.'
-      );
+      showFlashcard({
+        title: 'Value Required',
+        message: 'Please enter a value before saving.',
+        tone: 'warning',
+      });
 
       return;
     }
@@ -134,28 +142,31 @@ export default function SettingsScreen({
 
       onChangeName(inputValue.trim());
 
-      Alert.alert(
-        'Name Updated',
-        'Your name has been updated successfully.'
-      );
+      showFlashcard({
+        title: 'Name Updated',
+        message: 'Your name has been updated successfully.',
+        tone: 'success',
+      });
     }
 
 
     if (activeModal === 'email') {
 
-      Alert.alert(
-        'Email Updated',
-        'Your email has been updated successfully.'
-      );
+      showFlashcard({
+        title: 'Email Updated',
+        message: 'Your email has been updated successfully.',
+        tone: 'success',
+      });
     }
 
 
     if (activeModal === 'password') {
 
-      Alert.alert(
-        'Password Updated',
-        'Your password has been updated successfully.'
-      );
+      showFlashcard({
+        title: 'Password Updated',
+        message: 'Your password has been updated successfully.',
+        tone: 'success',
+      });
     }
 
 
@@ -821,6 +832,11 @@ export default function SettingsScreen({
         <View style={styles.bottomSpace} />
 
       </ScrollView>
+
+      <FlashcardModal
+        flashcard={flashcard}
+        onClose={closeFlashcard}
+      />
 
 
       {/* ==================================================
