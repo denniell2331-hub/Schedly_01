@@ -3,6 +3,7 @@ import React, {
   useContext,
   useEffect,
   useState,
+  useRef,
   ReactNode,
 } from 'react';
 
@@ -122,6 +123,25 @@ export function AppProvider({
   const [databaseReady, setDatabaseReady] =
     useState(false);
 
+  const databaseInitialization = useRef<{
+    promise: Promise<void>;
+    markReady: () => void;
+    started: boolean;
+  } | null>(null);
+
+  if (!databaseInitialization.current) {
+    let markReady = () => {};
+    const promise = new Promise<void>((resolve) => {
+      markReady = resolve;
+    });
+
+    databaseInitialization.current = {
+      promise,
+      markReady,
+      started: false,
+    };
+  }
+
 
   // ====================================================
   // DARK MODE STATE
@@ -145,6 +165,15 @@ export function AppProvider({
   // ====================================================
 
   useEffect(() => {
+
+    const initialization =
+      databaseInitialization.current;
+
+    if (!initialization || initialization.started) {
+      return;
+    }
+
+    initialization.started = true;
 
     async function loadTasks() {
 
@@ -178,6 +207,10 @@ export function AppProvider({
           error
         );
 
+      } finally {
+
+        initialization!.markReady();
+
       }
 
     }
@@ -197,6 +230,8 @@ export function AppProvider({
     priority: Task['priority'],
     deadline: string
   ) => {
+
+    await databaseInitialization.current?.promise;
 
     const newTask: Task = {
 
@@ -241,6 +276,8 @@ export function AppProvider({
   const completeTask = async (
     id: number
   ) => {
+
+    await databaseInitialization.current?.promise;
 
     const task = tasks.find(
       (currentTask) =>
@@ -293,6 +330,8 @@ export function AppProvider({
   const deleteTask = async (
     id: number
   ) => {
+
+    await databaseInitialization.current?.promise;
 
     // ==================================================
     // DELETE FROM SQLITE

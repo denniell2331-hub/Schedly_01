@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import {
   View,
@@ -16,47 +16,19 @@ import Ionicons from '@expo/vector-icons/Ionicons';
 import type { Task } from '../types/task';
 import { useApp } from '../context/AppContext';
 import type { AppTheme } from '../theme/theme';
-
-/* =========================================================
-   TYPES
-========================================================= */
-
-type HomeAcademicEvent = {
-  id: string | number;
-  eventType:
-    | 'Quiz'
-    | 'Exam'
-    | 'PIT'
-    | 'Assignment'
-    | 'Project'
-    | 'Others';
-  subject: string;
-  date: string;
-  startTime?: string;
-};
-
-type HomeNotification = {
-  key: string;
-  title: string;
-  message: string;
-  icon: keyof typeof Ionicons.glyphMap;
-  type: 'task' | 'quiz';
-  sortDate: number;
-};
+import {
+  getAcademicEvents,
+} from '../database/scheduleDatabase';
+import {
+  buildHomeNotifications,
+  hasUnreadHomeNotifications,
+} from '../utils/homeNotifications';
+import type {
+  HomeAcademicEvent,
+} from '../utils/homeNotifications';
 
 type HomeScreenProps = {
   tasks: Task[];
-
-  /*
-    Optional schedule events.
-
-    HomeScreen can receive the academic activities
-    from ScheduleScreen through this prop.
-
-    If it is not supplied, the app will still work.
-  */
-  scheduleEvents?: HomeAcademicEvent[];
-
   onAddTask: () => void;
   onToggleTask: (taskId: number) => void;
   onGoToTasks: () => void;
@@ -66,24 +38,11 @@ type HomeScreenProps = {
 };
 
 /* =========================================================
-   CONSTANTS
-========================================================= */
-
-const DAY_IN_MS = 24 * 60 * 60 * 1000;
-
-/*
-  A quiz becomes a Home notification when it is
-  scheduled today or within the next 7 days.
-*/
-const QUIZ_NOTIFICATION_DAYS = 7;
-
-/* =========================================================
    HOME SCREEN
 ========================================================= */
 
 export default function HomeScreen({
   tasks,
-  scheduleEvents = [],
   onAddTask,
   onToggleTask,
   onGoToTasks,
@@ -109,8 +68,8 @@ export default function HomeScreen({
   const [showNotifications, setShowNotifications] =
     useState(false);
 
-  const [showMenu, setShowMenu] =
-    useState(false);
+  const [scheduleEvents, setScheduleEvents] =
+    useState<HomeAcademicEvent[]>([]);
 
   /*
     Stores notification keys that the user has already seen.
@@ -124,6 +83,32 @@ export default function HomeScreen({
     seenNotificationKeys,
     setSeenNotificationKeys,
   ] = useState<string[]>([]);
+
+  useEffect(() => {
+    let isActive = true;
+
+    async function loadScheduleEvents() {
+      try {
+        const savedEvents =
+          await getAcademicEvents();
+
+        if (isActive) {
+          setScheduleEvents(savedEvents);
+        }
+      } catch (error) {
+        console.error(
+          'Failed to load schedule alerts:',
+          error
+        );
+      }
+    }
+
+    loadScheduleEvents();
+
+    return () => {
+      isActive = false;
+    };
+  }, []);
 
   /* =====================================================
      PRIORITY ORDER
@@ -178,155 +163,34 @@ export default function HomeScreen({
   const visibleTasks =
     pendingTasks.slice(0, 3);
 
-  /* =====================================================
-     NOTIFICATION CALCULATIONS
-  ===================================================== */
+  const mostRecentlyAddedPendingTask =
+    tasks.find((task) => !task.completed);
 
-  const today = startOfToday();
+  if (
+    mostRecentlyAddedPendingTask &&
+    !visibleTasks.some(
+      (task) =>
+        task.id === mostRecentlyAddedPendingTask.id
+    )
+  ) {
+    visibleTasks.push(mostRecentlyAddedPendingTask);
+  }
 
-  const notifications: HomeNotification[] = [];
-
-  /* =====================================================
-     OVERDUE TASK NOTIFICATIONS
-  ===================================================== */
-
-  tasks.forEach((task) => {
-    if (task.completed) {
-      return;
-    }
-
-    const deadlineDate =
-      parseTaskDeadline(task.deadline);
-
-    if (!deadlineDate) {
-      return;
-    }
-
-    if (deadlineDate.getTime() < Date.now()) {
-      notifications.push({
-        key: `overdue-task-${task.id}-${task.deadline}`,
-
-        title: 'Overdue task',
-
-        message: `"${task.title}" has passed its deadline.`,
-
-        icon: 'alert-circle-outline',
-
-        type: 'task',
-
-        sortDate: deadlineDate.getTime(),
-      });
-    }
-  });
-
-  /* =====================================================
-     UPCOMING QUIZ NOTIFICATIONS
-  ===================================================== */
-
-  scheduleEvents.forEach((event) => {
-    if (event.eventType !== 'Quiz') {
-      return;
-    }
-
-    const quizDate =
-      parseDateOnly(event.date);
-
-    if (!quizDate) {
-      return;
-    }
-
-    const difference =
-      quizDate.getTime() -
-      today.getTime();
-
-    const daysUntil =
-      Math.round(
-        difference / DAY_IN_MS
-      );
-
-    /*
-      Only show quizzes that are:
-      - today
-      - or within the next 7 days
-    */
-
-    if (
-      daysUntil >= 0 &&
-      daysUntil <=
-        QUIZ_NOTIFICATION_DAYS
-    ) {
-      let message = '';
-
-      if (daysUntil === 0) {
-        message = `"${event.subject}" has a quiz scheduled today.`;
-      } else if (daysUntil === 1) {
-        message = `"${event.subject}" has a quiz tomorrow.`;
-      } else {
-        message = `"${event.subject}" has a quiz in ${daysUntil} days.`;
-      }
-
-      notifications.push({
-        key: `quiz-${event.id}-${event.date}`,
-
-        title: 'Upcoming quiz',
-
-        message,
-
-        icon: 'help-circle-outline',
-
-        type: 'quiz',
-
-        sortDate: quizDate.getTime(),
-      });
-    }
-  });
-
-  /* =====================================================
-     SORT NOTIFICATIONS
-  ===================================================== */
-
-  notifications.sort(
-    (a, b) => {
-      /*
-        Overdue tasks first.
-        Then upcoming quizzes by date.
-      */
-
-      if (
-        a.type === 'task' &&
-        b.type === 'quiz'
-      ) {
-        return -1;
-      }
-
-      if (
-        a.type === 'quiz' &&
-        b.type === 'task'
-      ) {
-        return 1;
-      }
-
-      return (
-        a.sortDate -
-        b.sortDate
-      );
-    }
-  );
+  const notifications =
+    buildHomeNotifications(
+      tasks,
+      scheduleEvents
+    );
 
   /* =====================================================
      UNREAD NOTIFICATIONS
   ===================================================== */
 
-  const unreadNotifications =
-    notifications.filter(
-      (notification) =>
-        !seenNotificationKeys.includes(
-          notification.key
-        )
-    );
-
   const hasUnreadNotifications =
-    unreadNotifications.length > 0;
+    hasUnreadHomeNotifications(
+      notifications,
+      seenNotificationKeys
+    );
 
   /* =====================================================
      OPEN NOTIFICATIONS
@@ -380,20 +244,15 @@ export default function HomeScreen({
 
         <View style={styles.header}>
           <View style={styles.headerTop}>
-            {/* MENU */}
+            <View style={styles.greetingContainer}>
+              <Text style={styles.goodMorning}>
+                Good morning,
+              </Text>
 
-            <Pressable
-              style={styles.headerIconButton}
-              onPress={() => setShowMenu(true)}
-              accessibilityRole="button"
-              accessibilityLabel="Open navigation menu"
-            >
-              <Ionicons
-                name="menu-outline"
-                size={28}
-                color="#FFFFFF"
-              />
-            </Pressable>
+              <Text style={styles.greetingName}>
+                Alex! 👋
+              </Text>
+            </View>
 
             {/* RIGHT SIDE */}
 
@@ -439,25 +298,9 @@ export default function HomeScreen({
             </View>
           </View>
 
-          {/* GREETING */}
-
-          <View
-            style={styles.greetingContainer}
-          >
-            <Text style={styles.goodMorning}>
-              Good morning,
-            </Text>
-
-            <Text style={styles.greetingName}>
-              Alex! 👋
-            </Text>
-
-            <Text
-              style={styles.greetingSubtitle}
-            >
-              Stay productive today
-            </Text>
-          </View>
+          <Text style={styles.greetingSubtitle}>
+            Stay productive today
+          </Text>
         </View>
 
         {/* =================================================
@@ -761,150 +604,6 @@ export default function HomeScreen({
           )}
         </View>
       </ScrollView>
-
-      {/* =====================================================
-          QUICK NAVIGATION MENU
-      ===================================================== */}
-
-      <Modal
-        visible={showMenu}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setShowMenu(false)}
-      >
-        <View style={styles.menuOverlay}>
-          <Pressable
-            style={StyleSheet.absoluteFill}
-            onPress={() => setShowMenu(false)}
-            accessibilityRole="button"
-            accessibilityLabel="Close navigation menu"
-          />
-
-          <View style={styles.menuDrawer}>
-            <View style={styles.menuHeader}>
-              <View>
-                <Text style={styles.menuEyebrow}>
-                  SCHEDLY
-                </Text>
-                <Text style={styles.menuTitle}>
-                  Quick navigation
-                </Text>
-              </View>
-
-              <Pressable
-                style={styles.menuCloseButton}
-                onPress={() => setShowMenu(false)}
-                accessibilityRole="button"
-                accessibilityLabel="Close navigation menu"
-              >
-                <Ionicons
-                  name="close"
-                  size={22}
-                  color={theme.textSecondary}
-                />
-              </Pressable>
-            </View>
-
-            <View style={styles.menuDivider} />
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setShowMenu(false);
-                onGoToTasks();
-              }}
-              accessibilityRole="button"
-            >
-              <View style={styles.menuItemIcon}>
-                <Ionicons
-                  name="checkbox-outline"
-                  size={22}
-                  color={theme.primary}
-                />
-              </View>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>
-                  Tasks
-                </Text>
-                <Text style={styles.menuItemDescription}>
-                  View and update your task list
-                </Text>
-              </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.textMuted}
-              />
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setShowMenu(false);
-                onGoToSchedule();
-              }}
-              accessibilityRole="button"
-            >
-              <View style={styles.menuItemIcon}>
-                <Ionicons
-                  name="calendar-outline"
-                  size={22}
-                  color={theme.primary}
-                />
-              </View>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>
-                  Study Schedule
-                </Text>
-                <Text style={styles.menuItemDescription}>
-                  Plan quizzes, exams, and activities
-                </Text>
-              </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.textMuted}
-              />
-            </Pressable>
-
-            <Pressable
-              style={styles.menuItem}
-              onPress={() => {
-                setShowMenu(false);
-                onGoMore();
-              }}
-              accessibilityRole="button"
-            >
-              <View style={styles.menuItemIcon}>
-                <Ionicons
-                  name="ellipsis-horizontal"
-                  size={22}
-                  color={theme.primary}
-                />
-              </View>
-              <View style={styles.menuItemContent}>
-                <Text style={styles.menuItemTitle}>
-                  More
-                </Text>
-                <Text style={styles.menuItemDescription}>
-                  Profile, settings, and support
-                </Text>
-              </View>
-              <Ionicons
-                name="chevron-forward"
-                size={18}
-                color={theme.textMuted}
-              />
-            </Pressable>
-
-            <View style={styles.menuFooter}>
-              <Text style={styles.menuFooterText}>
-                Stay organized, one step at a time.
-              </Text>
-            </View>
-          </View>
-        </View>
-      </Modal>
 
       {/* =====================================================
           TASK DETAIL FLASHCARD
@@ -1242,7 +941,7 @@ export default function HomeScreen({
                     styles.notificationSubtitle
                   }
                 >
-                  Your latest schedule alerts
+                  Upcoming activities and overdue tasks
                 </Text>
               </View>
 
@@ -1337,6 +1036,16 @@ export default function HomeScreen({
                               notification.message
                             }
                           </Text>
+
+                          {notification.details && (
+                            <Text
+                              style={
+                                styles.notificationItemDetails
+                              }
+                            >
+                              {notification.details}
+                            </Text>
+                          )}
                         </View>
                       </View>
                     );
@@ -1509,134 +1218,6 @@ export default function HomeScreen({
 }
 
 /* =========================================================
-   DATE HELPERS
-========================================================= */
-
-/*
-  Creates today's date at midnight.
-
-  Using local time here avoids the common JavaScript
-  timezone problem caused by:
-
-  new Date("2026-09-26")
-*/
-function startOfToday(): Date {
-  const date = new Date();
-
-  date.setHours(
-    0,
-    0,
-    0,
-    0
-  );
-
-  return date;
-}
-
-/*
-  Parses a YYYY-MM-DD date without UTC conversion.
-
-  Example:
-
-  "2026-09-26"
-
-  becomes:
-
-  September 26, 2026 at local midnight.
-*/
-function parseDateOnly(
-  value: string
-): Date | null {
-  const match =
-    /^(\d{4})-(\d{2})-(\d{2})$/.exec(
-      value.trim()
-    );
-
-  if (!match) {
-    return null;
-  }
-
-  const year = Number(match[1]);
-  const month = Number(match[2]);
-  const day = Number(match[3]);
-
-  const date = new Date(
-    year,
-    month - 1,
-    day
-  );
-
-  if (
-    date.getFullYear() !== year ||
-    date.getMonth() !== month - 1 ||
-    date.getDate() !== day
-  ) {
-    return null;
-  }
-
-  return date;
-}
-
-/*
-  Parses task deadlines.
-
-  Your AddTaskScreen stores dates as:
-
-  YYYY-MM-DD
-
-  But this helper also supports dates such as:
-
-  Sep 26, 2026
-  2026-09-26T18:00:00.000Z
-*/
-function parseTaskDeadline(
-  deadline: string
-): Date | null {
-  const trimmed =
-    deadline.trim();
-
-  if (!trimmed) {
-    return null;
-  }
-
-  /* YYYY-MM-DD */
-
-  const dateOnly =
-    parseDateOnly(trimmed);
-
-  if (dateOnly) {
-    /*
-      A date-only task is considered overdue
-      after the entire deadline day has passed.
-    */
-
-    dateOnly.setHours(
-      23,
-      59,
-      59,
-      999
-    );
-
-    return dateOnly;
-  }
-
-  /* Other JavaScript-compatible date strings */
-
-  const parsed =
-    new Date(trimmed);
-
-  if (
-    Number.isNaN(
-      parsed.getTime()
-    )
-  ) {
-    return null;
-  }
-
-  return parsed;
-}
-
-/* =========================================================
    PRIORITY COLORS
 ========================================================= */
 
@@ -1738,109 +1319,6 @@ const createStyles = (
       position: 'relative',
     },
 
-    menuOverlay: {
-      flex: 1,
-      flexDirection: 'row',
-      backgroundColor: 'rgba(0, 0, 0, 0.38)',
-    },
-
-    menuDrawer: {
-      width: '82%',
-      maxWidth: 330,
-      height: '100%',
-      paddingHorizontal: 20,
-      paddingTop: 54,
-      paddingBottom: 24,
-      backgroundColor: theme.card,
-      borderRightWidth: 1,
-      borderRightColor: theme.border,
-    },
-
-    menuHeader: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-    },
-
-    menuEyebrow: {
-      fontSize: 10,
-      fontWeight: '800',
-      color: theme.primary,
-    },
-
-    menuTitle: {
-      marginTop: 5,
-      fontSize: 20,
-      fontWeight: '800',
-      color: theme.text,
-    },
-
-    menuCloseButton: {
-      width: 40,
-      height: 40,
-      borderRadius: 20,
-      alignItems: 'center',
-      justifyContent: 'center',
-      backgroundColor: theme.cardSecondary,
-    },
-
-    menuDivider: {
-      height: 1,
-      backgroundColor: theme.border,
-      marginVertical: 20,
-    },
-
-    menuItem: {
-      minHeight: 72,
-      flexDirection: 'row',
-      alignItems: 'center',
-      paddingHorizontal: 10,
-      paddingVertical: 10,
-      marginBottom: 9,
-      borderRadius: 14,
-      backgroundColor: theme.cardSecondary,
-    },
-
-    menuItemIcon: {
-      width: 42,
-      height: 42,
-      alignItems: 'center',
-      justifyContent: 'center',
-      marginRight: 11,
-      borderRadius: 13,
-      backgroundColor: theme.primaryLight,
-    },
-
-    menuItemContent: {
-      flex: 1,
-      marginRight: 6,
-    },
-
-    menuItemTitle: {
-      fontSize: 14,
-      fontWeight: '700',
-      color: theme.text,
-    },
-
-    menuItemDescription: {
-      marginTop: 4,
-      fontSize: 11,
-      lineHeight: 15,
-      color: theme.textSecondary,
-    },
-
-    menuFooter: {
-      marginTop: 'auto',
-      paddingTop: 16,
-      borderTopWidth: 1,
-      borderTopColor: theme.border,
-    },
-
-    menuFooterText: {
-      fontSize: 12,
-      color: theme.textMuted,
-    },
-
     notificationDot: {
       position: 'absolute',
       top: 8,
@@ -1863,7 +1341,9 @@ const createStyles = (
     },
 
     greetingContainer: {
-      marginTop: 20,
+      flex: 1,
+      minWidth: 0,
+      marginRight: 8,
     },
 
     goodMorning: {
@@ -1873,7 +1353,7 @@ const createStyles = (
     },
 
     greetingName: {
-      fontSize: 28,
+      fontSize: 25,
       fontWeight: '800',
       color: '#FFFFFF',
     },
@@ -1881,7 +1361,7 @@ const createStyles = (
     greetingSubtitle: {
       fontSize: 14,
       color: '#DCEBFF',
-      marginTop: 4,
+      marginTop: 10,
     },
 
     /* =====================================================
@@ -2457,6 +1937,13 @@ const createStyles = (
       fontSize: 12,
       lineHeight: 18,
       color: theme.textSecondary,
+    },
+
+    notificationItemDetails: {
+      fontSize: 11,
+      lineHeight: 16,
+      color: theme.textMuted,
+      marginTop: 4,
     },
 
     notificationEmpty: {

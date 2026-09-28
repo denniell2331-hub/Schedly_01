@@ -20,7 +20,7 @@ import { useFlashcard } from '../hooks/useFlashcard';
 
 type AddTaskScreenProps = {
   onBack: () => void;
-  onSaveTask: (task: Task) => void;
+  onSaveTask: (task: Task) => Promise<void>;
 };
 
 export default function AddTaskScreen({
@@ -80,6 +80,9 @@ export default function AddTaskScreen({
   const [priority, setPriority] = useState<
     'High' | 'Medium' | 'Low'
   >('Medium');
+
+  const [isSaving, setIsSaving] =
+    useState(false);
 
   /*
    * SQLite will receive an actual date:
@@ -335,7 +338,11 @@ export default function AddTaskScreen({
      SAVE TASK
   ===================================================== */
 
-  const handleSaveTask = () => {
+  const handleSaveTask = async () => {
+    if (isSaving) {
+      return;
+    }
+
     /* TITLE VALIDATION */
 
     if (!title.trim()) {
@@ -376,9 +383,18 @@ export default function AddTaskScreen({
       completed: false,
     };
 
-    /* SEND TO APP */
+    setIsSaving(true);
 
-    onSaveTask(newTask);
+    try {
+      await onSaveTask(newTask);
+    } catch {
+      setIsSaving(false);
+      showFlashcard({
+        title: 'Task Could Not Be Saved',
+        message: 'Your task was not added. Please try saving it again.',
+        tone: 'danger',
+      });
+    }
   };
 
   /* =====================================================
@@ -1069,13 +1085,19 @@ export default function AddTaskScreen({
         ================================================= */}
 
         <Pressable
-          style={styles.saveButton}
+          style={[
+            styles.saveButton,
+            isSaving && styles.saveButtonDisabled,
+          ]}
           onPress={handleSaveTask}
+          disabled={isSaving}
+          accessibilityRole="button"
+          accessibilityState={{ disabled: isSaving }}
         >
           <Text
             style={styles.saveButtonText}
           >
-            Save Task
+            {isSaving ? 'Saving Task...' : 'Save Task'}
           </Text>
         </Pressable>
       </ScrollView>
@@ -1565,6 +1587,10 @@ function createStyles(theme: AppTheme) {
       justifyContent: 'center',
       marginBottom: 10,
       elevation: 3,
+    },
+
+    saveButtonDisabled: {
+      opacity: 0.7,
     },
 
     saveButtonText: {

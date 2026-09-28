@@ -70,7 +70,9 @@ export default function ProfileScreen({
   } = useFlashcard();
 
   const startEditing = () => {
-    setEditStudentId(profile.studentId);
+    setEditStudentId(
+      profile.studentId.replace(/[^0-9]/g, '')
+    );
     setEditEmail(profile.email);
     setEditCourse(profile.course);
     setEditYearLevel(profile.yearLevel);
@@ -79,7 +81,9 @@ export default function ProfileScreen({
   };
 
   const cancelEditing = () => {
-    setEditStudentId(profile.studentId);
+    setEditStudentId(
+      profile.studentId.replace(/[^0-9]/g, '')
+    );
     setEditEmail(profile.email);
     setEditCourse(profile.course);
     setEditYearLevel(profile.yearLevel);
@@ -88,10 +92,21 @@ export default function ProfileScreen({
   };
 
   const saveProfile = () => {
-    if (!editStudentId.trim()) {
+    const studentId = editStudentId.trim();
+
+    if (!studentId) {
       showFlashcard({
         title: 'Student ID Required',
         message: 'Please enter your student ID.',
+        tone: 'warning',
+      });
+      return;
+    }
+
+    if (!/^[0-9]+$/.test(studentId)) {
+      showFlashcard({
+        title: 'Invalid Student ID',
+        message: 'Student ID can contain numbers only.',
         tone: 'warning',
       });
       return;
@@ -126,7 +141,7 @@ export default function ProfileScreen({
 
     setProfile((current) => ({
       ...current,
-      studentId: editStudentId.trim(),
+      studentId,
       email: editEmail.trim(),
       course: editCourse.trim(),
       yearLevel: editYearLevel.trim(),
@@ -343,9 +358,14 @@ export default function ProfileScreen({
                 <TextInput
                   style={styles.editInput}
                   value={editStudentId}
-                  onChangeText={setEditStudentId}
+                  onChangeText={(value) =>
+                    setEditStudentId(
+                      value.replace(/[^0-9]/g, '')
+                    )
+                  }
                   placeholder="Enter student ID"
                   placeholderTextColor="#9AAEC5"
+                  keyboardType="number-pad"
                 />
               ) : (
                 <Text style={styles.infoValue}>
